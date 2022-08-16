@@ -18,6 +18,12 @@ Helping the feds lol
     - [ ] Lowest Slot
     - [x] Snapshot Hashes
     - [x] Accounts Hashes
+    - [ ] Epoch Slots
+    - [ ] Legacy Version
+    - [ ] Version
+    - [x] Node Instance
+    - [ ] Duplicate Shred
+    - [ ] Incremental Snapshot Hashes
 - [ ] TVU
 - [ ] Repair
 - [ ] TPU

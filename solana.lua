@@ -89,8 +89,17 @@ local gossip_lowest_slot_slots  = ProtoField.none  ("solana.gossip.lowest_slots.
 local gossip_lowest_slot_slot   = ProtoField.none  ("solana.gossip.lowest_slots.slot",  "Slot")
 
 local gossip_hash_event = ProtoField.none  ("solana.gossip.hash_event")
-local gossip_hash_slot  = ProtoField.uint64("solana.gossip.hash_event.slot", "Slot")
+local gossip_hash_slot  = ProtoField.uint64("solana.gossip.hash_event.slot", "Slot", base.DEC)
 local gossip_hash_hash  = ProtoField.bytes ("solana.gossip.hash_event.hash", "Hash")
+
+local gossip_version_major    = ProtoField.uint16("solana.gossip.version.major",    "Major",       base.DEC)
+local gossip_version_minor    = ProtoField.uint16("solana.gossip.version.minor",    "Minor",       base.DEC)
+local gossip_version_patch    = ProtoField.uint16("solana.gossip.version.patch",    "Patch",       base.DEC)
+local gossip_version_commit   = ProtoField.uint32("solana.gossip.version.commit",   "Commit Hash", base.HEX)
+local gossip_version_features = ProtoField.uint32("solana.gossip.version.features", "Feature Set", base.HEX)
+
+local gossip_node_instance_timestamp = ProtoField.uint64("solana.gossip.node_instance.timestamp", "Instance Creation Timestamp", base.DEC)
+local gossip_node_instance_token     = ProtoField.uint64("solana.gossip.node_instance.token",     "Instance Token",              base.HEX)
 
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
@@ -166,6 +175,15 @@ gossip.fields = {
     gossip_hash_event,
     gossip_hash_slot,
     gossip_hash_hash,
+    -- CRDS Version
+    gossip_version_major,
+    gossip_version_minor,
+    gossip_version_patch,
+    gossip_version_commit,
+    gossip_version_features,
+    -- CRDS NodeInstance
+    gossip_node_instance_timestamp,
+    gossip_node_instance_token,
 }
 
 function gossip.dissector (tvb, pinfo, tree)
@@ -260,6 +278,26 @@ function disect_crds_data (tvb, tree)
             tvb = tvb(40)
         end
         tree:add_le(gossip_wallclock, tvb(0,8))
+    elseif data_id == GOSSIP_CRDS_LEGACY_VERSION or data_id == GOSSIP_CRDS_VERSION then
+        tree:add   (gossip_pubkey,        tvb(0,32))
+        tree:add_le(gossip_wallclock,     tvb(32,8))
+        tree:add_le(gossip_version_major, tvb(40,2))
+        tree:add_le(gossip_version_minor, tvb(42,2))
+        tree:add_le(gossip_version_patch, tvb(44,2))
+        if tvb(46,1) == 1 then
+            tree:add_le(gossip_version_commit, tvb(47,4))
+            tvb = tvb(51)
+        else
+            tvb = tvb(47)
+        end
+        if data_id == GOSSIP_CRDS_VERSION then
+            tree:add_le(gossip_version_features, tvb(0,4))
+        end
+    elseif data_id == GOSSIP_CRDS_NODE_INSTANCE then
+        tree:add   (gossip_pubkey,    tvb(0,32))
+        tree:add_le(gossip_wallclock, tvb(32,8))
+        tree:add_le(gossip_node_instance_timestamp, tvb(40,8))
+        tree:add_le(gossip_node_instance_token,     tvb(48,8))
     end
 
     return tvb
