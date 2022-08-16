@@ -59,13 +59,43 @@ local gossip_contact_info_rpc          = ProtoField.none("solana.gossip.contact_
 local gossip_contact_info_rpc_pubsub   = ProtoField.none("solana.gossip.contact_info.rpc_pubsub", "RPC PubSub Endpoint")
 local gossip_contact_info_serve_repair = ProtoField.none("solana.gossip.contact_info.serve_repair", "Serve Repair Endpoint")
 
-local gossip_ip4 = ProtoField.ipv4("solana.gossip.ip4", "IP")
-local gossip_ip6 = ProtoField.ipv6("solana.gossip.ip6", "IP")
-local gossip_port = ProtoField.uint16("solana.gossip.port", "Port") -- TODO fix per-protocol port
-local gossip_wallclock = ProtoField.uint64("solana.gossip.wallclock", "Wall clock")
+local gossip_vote_pubkey = ProtoField.bytes("solana.gossip.vote.pubkey", "Pubkey")
+
+local gossip_ip4           = ProtoField.ipv4  ("solana.gossip.ip4",         "IP")
+local gossip_ip6           = ProtoField.ipv6  ("solana.gossip.ip6",         "IP")
+local gossip_port          = ProtoField.uint16("solana.gossip.port",        "Port") -- TODO fix per-protocol port
+local gossip_wallclock     = ProtoField.uint64("solana.gossip.wallclock",   "Wall clock")
 local gossip_shred_version = ProtoField.uint16("solana.shred_version")
 
+local sol_transaction      = ProtoField.none ("solana.tx",                  "Transaction")
+local sol_signature        = ProtoField.bytes("solana.sig",                 "Signature")
+local sol_pubkey           = ProtoField.bytes("solana.pubkey",              "Pubkey")
+local sol_tx_sigs_req      = ProtoField.uint8("solana.tx.sigs_req",         "Required Signatures",      base.DEC)
+local sol_tx_signed_ro     = ProtoField.uint8("solana.tx.sigs.ro",          "Signed read-only count",   base.DEC)
+local sol_tx_unsigned_ro   = ProtoField.uint8("solana.tx.sigs.rw",          "Unsigned read-only count", base.DEC)
+local sol_recent_blockhash = ProtoField.bytes("solana.tx.recent_blockhash", "Recent blockhash")
+
+local sol_invoc             = ProtoField.none ("solana.insn",               "Instruction")
+local sol_invoc_program_idx = ProtoField.uint8("solana.insn.program_index", "Program Index", base.DEC)
+local sol_invoc_account_idx = ProtoField.uint8("solana.insn.account_index", "Account Index", base.DEC)
+local sol_invoc_data        = ProtoField.bytes("solana.insn.data",          "Data")
+
+local core_fields = {
+    sol_transaction,
+    sol_signature,
+    sol_pubkey,
+    sol_tx_sigs_req,
+    sol_tx_signed_ro,
+    sol_tx_unsigned_ro,
+    sol_recent_blockhash,
+    sol_invoc,
+    sol_invoc_program_idx,
+    sol_invoc_account_idx,
+    sol_invoc_data,
+}
+
 gossip.fields = {
+    unpack(core_fields),
     ------- Messages
     gossip_message_id,
     -- Pull response
@@ -97,6 +127,8 @@ gossip.fields = {
     gossip_contact_info_rpc,
     gossip_contact_info_rpc_pubsub,
     gossip_contact_info_serve_repair,
+    -- CRDS Vote
+    gossip_vote_pubkey,
 }
 
 function gossip.dissector (tvb, pinfo, tree)
@@ -152,6 +184,8 @@ function disect_crds_data (tvb, tree)
         tvb = disect_socket_addr(gossip_contact_info_serve_repair, tvb, tree)
         tree:add_le(gossip_wallclock, tvb(0,8))
         tree:add_le(gossip_shred_version, tvb(8,2))
+    elseif data_id == GOSSIP_CRDS_VOTE then
+        tree:add(gossip_vote_pubkey, tvb(0,32))
     end
 
     return tvb
@@ -192,5 +226,66 @@ function disect_socket_addr (entry, tvb, tree)
     subtree:add(ip_entry, ip_tvb)
     subtree:add_le(gossip_port, port_tvb)
 
-    return return_tvb
+    return return_tvb, subtree
+end
+
+function disect_transaction (tvb, tree)
+    local before_len = tvb:len()
+    local subtree = tree:add(sol_transaction, tvb)
+
+    local num_sigs = tvb(0,4):le_uint() -- uint64 broken
+    tvb = tvb(8)
+    for i=1,num_sigs,1 do
+        subtree:add(sol_signature, tvb(0,64)):append_text(" #" .. i-1)
+        tvb = tvb(64)
+    end
+
+    -- TODO support txn v0
+    subtree:add_le(sol_tx_sigs_req,    tvb(0,1))
+    subtree:add_le(sol_tx_signed_ro,   tvb(1,1))
+    subtree:add_le(sol_tx_unsigned_ro, tvb(2,1))
+    tvb = tvb(3)
+
+    local num_keys = tvb(0,4):le_uint() -- uint64 broken
+    tvb = tvb(8)
+    for i=1,num_keys,1 do
+        subtree:add(sol_pubkey, tvb(0,32)):append_text(" #" .. i-1)
+        tvb = tvb(32)
+    end
+
+    subtree:add(sol_recent_blockhash, tvb(0,32))
+    tvb = tvb(32)
+
+    local num_invocs = tvb(0,4):le_uint()
+    tvb = tvb(8)
+    for i=1,num_invocs,1 do
+        local invoc
+        tvb, invoc = disect_invoc (tvb, subtree)
+        invoc:append_text(" #" .. i-1)
+    end
+
+    subtree:set_len(tvb:len() - before_len)
+    return tvb, subtree
+end
+
+function disect_invoc (tvb, tree)
+    local before_len = tvb:len()
+    local subtree = tree:add(sol_invoc, tvb)
+
+    subtree:add_le(sol_invoc_program_idx, tvb(0,1))
+    tvb = tvb(1)
+
+    local num_accs = tvb(0,4):le_uint() -- uint64 broken
+    tvb = tvb(8)
+    for i=1,num_accs,1 do
+        subtree:add_le(sol_invoc_account_idx, tvb(0,1))
+        tvb = tvb(1)
+    end
+
+    local data_len = tvb(0,4):le_uint() -- uint64 broken
+    subtree:add(sol_invoc_data, tvb(8,data_len))
+    tvb = tvb(8+data_len)
+
+    subtree:set_len(tvb:len() - before_len)
+    return tvb, subtree
 end
