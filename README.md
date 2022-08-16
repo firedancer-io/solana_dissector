@@ -12,7 +12,12 @@ Helping the feds lol
     - [x] Pong Message
   - Types
     - [x] Socket Address
+  - CRDS
     - [x] Contact Info
+    - [ ] Vote
+    - [ ] Lowest Slot
+    - [x] Snapshot Hashes
+    - [x] Accounts Hashes
 - [ ] TVU
 - [ ] Repair
 - [ ] TPU
