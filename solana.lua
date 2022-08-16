@@ -9,6 +9,51 @@ if set_plugin_info then
     set_plugin_info(my_info)
 end
 
+local byte, char, concat = string.byte, string.char, table.concat
+
+-- https://github.com/philanc/plc/blob/master/plc/base58.lua
+-- Copyright (c) 2015  Phil Leblanc  -- see copyright/plc.NOTICE file
+local b58chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+local b58charmap = {};
+for i = 1, 58 do b58charmap[byte(b58chars, i)] = i - 1  end
+local function base58_encode(s)
+	local q, b
+	local et = {}
+	local zn = 0
+	local nt = {}
+	local dt = {}
+	local more = true
+	for i = 1, #s do
+		b = byte(s, i)
+		if more and b == 0 then
+			zn = zn + 1
+		else
+			more = false
+		end
+		nt[i] = b
+	end
+	if #s == zn then
+		return string.rep('1', zn)
+	end
+	more = true
+	while more do
+		local r = 0
+		more = false
+		for i = 1, #nt do
+			b = nt[i] + (256 * r)
+			q = math.floor(b / 58)
+			more = more or q > 0
+			r = b % 58
+			dt[i] = q
+		end
+		table.insert(et, 1, char(byte(b58chars, r+1)))
+		nt = {}
+		for i = 1, #dt do nt[i] = dt[i] end
+		dt = {}
+	end
+	return string.rep('1', zn) .. concat(et)
+end
+
 local gossip = Proto("Solana.Gossip", "Solana Gossip Protocol")
 
 local GOSSIP_MSG_PULL_REQ  = 0
@@ -79,6 +124,7 @@ local gossip_contact_info_rpc          = ProtoField.none("solana.gossip.contact_
 local gossip_contact_info_rpc_pubsub   = ProtoField.none("solana.gossip.contact_info.rpc_pubsub", "RPC PubSub Endpoint")
 local gossip_contact_info_serve_repair = ProtoField.none("solana.gossip.contact_info.serve_repair", "Serve Repair Endpoint")
 
+local gossip_vote_index     = ProtoField.uint8 ("solana.gossip.vote.index",  "Index")
 local gossip_vote_pubkey    = ProtoField.bytes ("solana.gossip.vote.pubkey", "Pubkey")
 local gossip_vote_slot      = ProtoField.uint64("solana.gossip.vote.slot",   "Slot")
 
@@ -103,18 +149,19 @@ local gossip_node_instance_token     = ProtoField.uint64("solana.gossip.node_ins
 
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
-local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
+local sol_pubkey            = ProtoField.none  ("solana.pubkey",              "Pubkey")
 local sol_tx_sigs_req       = ProtoField.uint8 ("solana.tx.sigs_req",         "Required Signatures",      base.DEC)
 local sol_tx_signed_ro      = ProtoField.uint8 ("solana.tx.sigs.ro",          "Signed read-only count",   base.DEC)
 local sol_tx_unsigned_ro    = ProtoField.uint8 ("solana.tx.sigs.rw",          "Unsigned read-only count", base.DEC)
-local sol_recent_blockhash  = ProtoField.bytes ("solana.tx.recent_blockhash", "Recent blockhash")
+local sol_recent_blockhash  = ProtoField.none  ("solana.tx.recent_blockhash", "Recent blockhash")
 local sol_shred_version     = ProtoField.uint16("solana.shred_version")
 local sol_invoc             = ProtoField.none  ("solana.insn",                "Instruction")
 local sol_invoc_program_idx = ProtoField.uint8 ("solana.insn.program_index",  "Program Index", base.DEC)
 local sol_invoc_account_idx = ProtoField.uint8 ("solana.insn.account_index",  "Account Index", base.DEC)
 local sol_invoc_data        = ProtoField.bytes ("solana.insn.data",           "Data")
 
-local core_fields = {
+gossip.fields = {
+    ------- Solana Core
     sol_transaction,
     sol_signature,
     sol_pubkey,
@@ -127,10 +174,6 @@ local core_fields = {
     sol_invoc_program_idx,
     sol_invoc_account_idx,
     sol_invoc_data,
-}
-
-gossip.fields = {
-    unpack(core_fields),
     ------- Messages
     gossip_message_id,
     -- Pull response
@@ -145,7 +188,6 @@ gossip.fields = {
     gossip_ip6,
     gossip_port,
     gossip_wallclock,
-    sol_shred_version,
     gossip_pubkey,
     -- CRDS
     gossip_crds_value,
@@ -163,6 +205,7 @@ gossip.fields = {
     gossip_contact_info_rpc_pubsub,
     gossip_contact_info_serve_repair,
     -- CRDS Vote
+    gossip_vote_index,
     gossip_vote_pubkey,
     gossip_vote_slot,
     -- CRDS Lowest Slot
@@ -196,7 +239,7 @@ function gossip.dissector (tvb, pinfo, tree)
 
     if message_id == GOSSIP_MSG_PULL_REQ then
         -- disect_crds_filter(tvb, subtree)
-    elseif message_id == GOSSIP_MSG_PULL_RESP then
+    elseif message_id == GOSSIP_MSG_PULL_RESP or message_id == GOSSIP_MSG_PUSH then
         subtree:add(gossip_pull_resp_pubkey, tvb(0,32))
         local num_values = tvb(32,4):le_uint() -- 8 bytes broken
         tvb = tvb(40)
@@ -240,8 +283,10 @@ function disect_crds_data (tvb, tree)
         tree:add_le(gossip_wallclock, tvb(0,8))
         tree:add_le(sol_shred_version, tvb(8,2))
     elseif data_id == GOSSIP_CRDS_VOTE then
-        tree:add(gossip_vote_pubkey, tvb(0,32))
-        tvb = disect_transaction(tvb, tree, "Vote Transaction")
+        tree:add(gossip_vote_index, tvb(0,1))
+        tree:add(gossip_vote_pubkey, tvb(1,32))
+        tvb, tx = disect_transaction(tvb(33), tree)
+        tx:set_text("Vote Transaction")
         tree:add_le(gossip_wallclock, tvb(0,8))
         if tvb(8,1):uint() == 1 then
             tree:add_le(gossip_vote_slot, tvb(9,8))
@@ -279,7 +324,7 @@ function disect_crds_data (tvb, tree)
         end
         tree:add_le(gossip_wallclock, tvb(0,8))
     elseif data_id == GOSSIP_CRDS_LEGACY_VERSION or data_id == GOSSIP_CRDS_VERSION then
-        tree:add   (gossip_pubkey,        tvb(0,32))
+        disect_pubkey(tvb(0,32), tree)
         tree:add_le(gossip_wallclock,     tvb(32,8))
         tree:add_le(gossip_version_major, tvb(40,2))
         tree:add_le(gossip_version_minor, tvb(42,2))
@@ -343,10 +388,10 @@ end
 
 function disect_transaction (tvb, tree, name)
     local before_len = tvb:len()
-    local subtree = tree:add(sol_transaction, tvb, name)
+    local subtree = tree:add(sol_transaction, tvb)
 
-    local num_sigs = tvb(0,4):le_uint() -- uint64 broken
-    tvb = tvb(8)
+    local num_sigs = tvb(0,1):le_uint()
+    tvb = tvb(1)
     for i=1,num_sigs,1 do
         subtree:add(sol_signature, tvb(0,64)):append_text(" #" .. i-1)
         tvb = tvb(64)
@@ -358,25 +403,25 @@ function disect_transaction (tvb, tree, name)
     subtree:add_le(sol_tx_unsigned_ro, tvb(2,1))
     tvb = tvb(3)
 
-    local num_keys = tvb(0,4):le_uint() -- uint64 broken
-    tvb = tvb(8)
+    local num_keys = tvb(0,1):le_uint()
+    tvb = tvb(1)
     for i=1,num_keys,1 do
-        subtree:add(sol_pubkey, tvb(0,32)):append_text(" #" .. i-1)
+        disect_pubkey(tvb(0,32), subtree):append_text(" #" .. i-1)
         tvb = tvb(32)
     end
 
-    subtree:add(sol_recent_blockhash, tvb(0,32))
+    disect_pubkey(tvb(0,32), subtree, sol_recent_blockhash)
     tvb = tvb(32)
 
-    local num_invocs = tvb(0,4):le_uint()
-    tvb = tvb(8)
+    local num_invocs = tvb(0,1):le_uint()
+    tvb = tvb(1)
     for i=1,num_invocs,1 do
         local invoc
         tvb, invoc = disect_invoc (tvb, subtree)
         invoc:append_text(" #" .. i-1)
     end
 
-    subtree:set_len(tvb:len() - before_len)
+    subtree:set_len(before_len - tvb:len())
     return tvb, subtree
 end
 
@@ -387,17 +432,29 @@ function disect_invoc (tvb, tree)
     subtree:add_le(sol_invoc_program_idx, tvb(0,1))
     tvb = tvb(1)
 
-    local num_accs = tvb(0,4):le_uint() -- uint64 broken
-    tvb = tvb(8)
+    local num_accs = tvb(0,1):le_uint()
+    tvb = tvb(1)
     for i=1,num_accs,1 do
         subtree:add_le(sol_invoc_account_idx, tvb(0,1))
         tvb = tvb(1)
     end
 
-    local data_len = tvb(0,4):le_uint() -- uint64 broken
-    subtree:add(sol_invoc_data, tvb(8,data_len))
-    tvb = tvb(8+data_len)
+    local data_len = tvb(0,1):le_uint()
+    subtree:add(sol_invoc_data, tvb(1,data_len))
+    tvb = tvb(1+data_len)
 
-    subtree:set_len(tvb:len() - before_len)
+    subtree:set_len(before_len - tvb:len())
     return tvb, subtree
+end
+
+function disect_pubkey (tvb, tree, entry)
+    tvb = tvb(0,32)
+    return tree:add(entry or sol_pubkey, tvb):
+        append_text(": " .. base58_encode(tvb:bytes():raw()))
+end
+
+function disect_signature (tvb, tree, entry)
+    tvb = tvb(0,64)
+    return tree:add(entry or sol_signature, tvb):
+        append_text(": " .. base58_encode(tvb:bytes():raw()))
 end
