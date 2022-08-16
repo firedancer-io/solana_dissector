@@ -288,9 +288,7 @@ function disect_crds_data (tvb, tree)
         tvb, tx = disect_transaction(tvb(33), tree)
         tx:set_text("Vote Transaction")
         tree:add_le(gossip_wallclock, tvb(0,8))
-        if tvb(8,1):uint() == 1 then
-            tree:add_le(gossip_vote_slot, tvb(9,8))
-        end
+        if tvb:len() > 8 then tvb = tvb(8) end
     elseif data_id == GOSSIP_CRDS_LOWEST_SLOT then
         tree:add_le(gossip_lowest_slot_index, tvb(0,1))
         tree:add   (gossip_pubkey, tvb(1,32))
@@ -442,6 +440,7 @@ function disect_invoc (tvb, tree)
     local data_len = tvb(0,1):le_uint()
     subtree:add(sol_invoc_data, tvb(1,data_len))
     tvb = tvb(1+data_len)
+    tvb = tvb(1) -- magic padding byte idk lol
 
     subtree:set_len(before_len - tvb:len())
     return tvb, subtree

@@ -12,9 +12,12 @@ Helping the feds lol
     - [x] Pong Message
   - Types
     - [x] Socket Address
+    - [x] Transaction (legacy)
+    - [ ] Transaction (v0)
   - CRDS
     - [x] Contact Info
-    - [ ] Vote
+    - [x] Vote
+      - [ ] Vote program data
     - [ ] Lowest Slot
     - [x] Snapshot Hashes
     - [x] Accounts Hashes
