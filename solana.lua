@@ -10,10 +10,14 @@ if set_plugin_info then
 end
 
 ---------------------------------------
--- Data Types                        --
+-- Protocols                         --
 ---------------------------------------
 
 local gossip = Proto("Solana.Gossip", "Solana Gossip Protocol")
+
+---------------------------------------
+-- Data Types                        --
+---------------------------------------
 
 local GOSSIP_MSG_PULL_REQ  = 0
 local GOSSIP_MSG_PULL_RESP = 1
@@ -34,7 +38,7 @@ local gossip_message_names = {
 local gossip_ping_from = ProtoField.bytes("solana.gossip.ping.from", "From")
 local gossip_ping_token = ProtoField.bytes("solana.gossip.ping.token", "Token")
 local gossip_ping_signature = ProtoField.bytes("solana.gossip.ping.signature", "Signature")
-local gossip_pull_resp_pubkey = ProtoField.none("solana.gossip.pull_response.pubkey", "Pubkey")
+local gossip_pull_resp_pubkey = ProtoField.bytes("solana.gossip.pull_response.pubkey", "Pubkey")
 
 local gossip_crds_value = ProtoField.none("solana.gossip.crds_value", "Value")
 local gossip_crds_value_signature = ProtoField.bytes("solana.gossip.crds_value.signature", "Signature")
@@ -91,7 +95,7 @@ local gossip_lowest_slot_index  = ProtoField.uint8 ("solana.gossip.lowest_slot.i
 local gossip_lowest_slot_root   = ProtoField.uint64("solana.gossip.lowest_slot.root",   "Root Slot")
 local gossip_lowest_slot_lowest = ProtoField.uint64("solana.gossip.lowest_slot.lowest", "Lowest Slot")
 local gossip_lowest_slot_slots  = ProtoField.none  ("solana.gossip.lowest_slots.slots", "Slots")
-local gossip_lowest_slot_slot   = ProtoField.none  ("solana.gossip.lowest_slots.slot",  "Slot")
+local gossip_lowest_slot_slot   = ProtoField.uint64("solana.gossip.lowest_slots.slot",  "Slot")
 
 local gossip_hash_event = ProtoField.none  ("solana.gossip.hash_event")
 local gossip_hash_slot  = ProtoField.uint64("solana.gossip.hash_event.slot", "Slot", base.DEC)
@@ -108,11 +112,11 @@ local gossip_node_instance_token     = ProtoField.uint64("solana.gossip.node_ins
 
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
-local sol_pubkey            = ProtoField.none  ("solana.pubkey",              "Pubkey")
+local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
 local sol_tx_sigs_req       = ProtoField.uint8 ("solana.tx.sigs_req",         "Required Signatures",      base.DEC)
 local sol_tx_signed_ro      = ProtoField.uint8 ("solana.tx.sigs.ro",          "Signed read-only count",   base.DEC)
 local sol_tx_unsigned_ro    = ProtoField.uint8 ("solana.tx.sigs.rw",          "Unsigned read-only count", base.DEC)
-local sol_recent_blockhash  = ProtoField.none  ("solana.tx.recent_blockhash", "Recent blockhash")
+local sol_recent_blockhash  = ProtoField.bytes ("solana.tx.recent_blockhash", "Recent blockhash")
 local sol_shred_version     = ProtoField.uint16("solana.shred_version")
 local sol_invoc             = ProtoField.none  ("solana.insn",                "Instruction")
 local sol_invoc_program_idx = ProtoField.uint8 ("solana.insn.program_index",  "Program Index", base.DEC)
@@ -216,51 +220,6 @@ udp_port:add(8000, gossip)
 -- Helpers                           --
 ---------------------------------------
 
--- Base58 decoder
--- https://github.com/philanc/plc/blob/master/plc/base58.lua
--- Copyright (c) 2015  Phil Leblanc  -- see copyright/plc.NOTICE file
-local b58chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-local b58charmap = {};
-for i = 1, 58 do b58charmap[string.byte(b58chars, i)] = i - 1  end
-local function base58_encode(s)
-    local byte, char, concat = string.byte, string.char, table.concat
-	local q, b
-	local et = {}
-	local zn = 0
-	local nt = {}
-	local dt = {}
-	local more = true
-	for i=0, s:len()-1 do
-		b = s:get_index(i)
-		if more and b == 0 then
-			zn = zn + 1
-		else
-			more = false
-		end
-		nt[i] = b
-	end
-	if s:len() == zn then
-		return string.rep('1', zn)
-	end
-	more = true
-	while more do
-		local r = 0
-		more = false
-		for i = 1, #nt do
-			b = nt[i] + (256 * r)
-			q = math.floor(b / 58)
-			more = more or q > 0
-			r = b % 58
-			dt[i] = q
-		end
-		table.insert(et, 1, char(byte(b58chars, r+1)))
-		nt = {}
-		for i = 1, #dt do nt[i] = dt[i] end
-		dt = {}
-	end
-	return string.rep('1', zn) .. concat(et)
-end
-
 -- Splits a Tvb into TvbRange.
 -- Takes indexes as variadic args.
 -- Finish args with -1 to return remaining TvbRange.
@@ -295,7 +254,7 @@ function solana_gossip_disect_pull_req (tvb, subtree)
 end
 
 function solana_gossip_disect_pull_resp (tvb, subtree)
-    solana_disect_pubkey(tvb(0,32), subtree, gossip_pull_resp_pubkey)
+    subtree:add(gossip_pull_resp_pubkey, tvb(0,32))
     local num_values = tvb(32,4):le_uint() -- 8 bytes broken
     tvb = tvb(40)
     for i=1,num_values,1 do
@@ -366,7 +325,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
         end
         tree:add_le(gossip_wallclock, tvb(0,8))
     elseif data_id == GOSSIP_CRDS_LEGACY_VERSION or data_id == GOSSIP_CRDS_VERSION then
-        solana_disect_pubkey(tvb(0,32), tree)
+        tree:add(sol_pubkey, tvb(0,32))
         tree:add_le(gossip_wallclock,     tvb(32,8))
         tree:add_le(gossip_version_major, tvb(40,2))
         tree:add_le(gossip_version_minor, tvb(42,2))
@@ -434,11 +393,11 @@ function solana_gossip_disect_transaction (tvb, tree, name)
     local num_keys = tvb(0,1):le_uint()
     tvb = tvb(1)
     for i=1,num_keys,1 do
-        solana_disect_pubkey(tvb(0,32), subtree):append_text(" #" .. i-1)
+        subtree:add(sol_pubkey, tvb(0,32)):append_text(" #" .. i-1)
         tvb = tvb(32)
     end
 
-    solana_disect_pubkey(tvb(0,32), subtree, sol_recent_blockhash)
+    subtree:add(sol_recent_blockhash, tvb(0,32))
     tvb = tvb(32)
 
     local num_invocs = tvb(0,1):le_uint()
@@ -471,22 +430,7 @@ function solana_disect_invoc (tvb, tree)
     local data_len = tvb(0,1):le_uint()
     subtree:add(sol_invoc_data, tvb(1,data_len))
     tvb = tvb(1+data_len)
-    tvb = tvb(1) -- magic padding byte idk lol
 
     subtree:set_len(before_len - tvb:len())
     return tvb, subtree
-end
-
--- Pops a pubkey or hash off tvb and appends it to tree.
-function solana_disect_pubkey (tvb, tree, entry)
-    tvb = tvb(0,32)
-    return tree:add(entry or sol_pubkey, tvb):
-        append_text(": " .. base58_encode(tvb:bytes()))
-end
-
--- Pops a signature off tvb and appends it to tree.
-function solana_disect_signature (tvb, tree, entry)
-    tvb = tvb(0,64)
-    return tree:add(entry or sol_signature, tvb):
-        append_text(": " .. base58_encode(tvb:bytes()))
 end

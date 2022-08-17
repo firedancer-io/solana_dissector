@@ -15,12 +15,6 @@ curl --output /Applications/Wireshark.app/Contents/PlugIns/wireshark/solana.lua 
 
 To activate, hit Cmd+Shift+L or restart Wireshark.
 
-## Acknowledgements
-
-- Plugin by [@terorie (Richard Patel)](https://github.com/terorie)
-- Base58 decoder by [@catwell (Pierre Chapuis)](https://github.com/catwell)
-  - Taken from [plc](https://github.com/philanc/plc), MIT License
-
 ## Development
 
 - 🚧 Gossip protocol
