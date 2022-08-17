@@ -16,6 +16,7 @@ end
 local solana_proto = Proto("Solana.Core",   "Solana Core Protocol")
 local gossip       = Proto("Solana.Gossip", "Solana Gossip Protocol")
 local shreds_proto = Proto("Solana.Shreds", "Solana Shreds Protocol")
+local repair_proto = Proto("Solana.Repair", "Solana Repair Protocol")
 
 ---------------------------------------
 -- Data Types                        --
@@ -168,6 +169,41 @@ local shred_data_last          = ProtoField.bool  ("solana.shred.data.last",    
 local shred_data_size          = ProtoField.uint16("solana.shred.data.size",          "Size")
 local shred_data_content       = ProtoField.bytes ("solana.shred.data.contents",      "Content")
 
+local REPAIR_LEGACY_WINDOW_INDEX                    = 0
+local REPAIR_LEGACY_HIGHEST_WINDOW_INDEX            = 1
+local REPAIR_LEGACY_ORPHAN                          = 2
+local REPAIR_LEGACY_WINDOW_INDEX_WITH_NONCE         = 3
+local REPAIR_LEGACY_HIGHEST_WINDOW_INDEX_WITH_NONCE = 4
+local REPAIR_LEGACY_ORPHAN_WITH_NONCE               = 5
+local REPAIR_LEGACY_ANCESTOR_HASHES                 = 6
+local REPAIR_PONG                                   = 7
+local REPAIR_WINDOW_INDEX                           = 8
+local REPAIR_HIGHEST_WINDOW_INDEX                   = 9
+local REPAIR_ORPHAN                                 = 10
+local REPAIR_ANCESTOR_HASHES                        = 11
+
+local repair_message_id = ProtoField.uint32("solana.repair.message_id", "Message ID", base.DEC)
+local repair_message_names = {
+    [REPAIR_LEGACY_WINDOW_INDEX]                    = "LegacyWindowIndex",
+    [REPAIR_LEGACY_HIGHEST_WINDOW_INDEX]            = "LegacyHighestWindowIndex",
+    [REPAIR_LEGACY_ORPHAN]                          = "LegacyOrphan",
+    [REPAIR_LEGACY_WINDOW_INDEX_WITH_NONCE]         = "LegacyWindowIndexWithNonce",
+    [REPAIR_LEGACY_HIGHEST_WINDOW_INDEX_WITH_NONCE] = "LegacyHighestWindowIndexWithNonce",
+    [REPAIR_LEGACY_ORPHAN_WITH_NONCE]               = "LegacyOrphanWithNonce",
+    [REPAIR_LEGACY_ANCESTOR_HASHES]                 = "LegacyAncestorHashes",
+    [REPAIR_PONG]                                   = "Pong",
+    [REPAIR_WINDOW_INDEX]                           = "WindowIndex",
+    [REPAIR_HIGHEST_WINDOW_INDEX]                   = "HighestWindowIndex",
+    [REPAIR_ORPHAN]                                 = "Orphan",
+    [REPAIR_ANCESTOR_HASHES]                        = "AncestorHashes",
+}
+
+local repair_shred_index = ProtoField.uint64("solana.repair.shred_index", "Shred Index")
+local repair_nonce       = ProtoField.uint32("solana.repair.nonce",       "Nonce", base.HEX)
+local repair_sender      = ProtoField.bytes ("solana.repair.sender",      "Sender")
+local repair_recipient   = ProtoField.bytes ("solana.repair.recipient",   "Recipient")
+local repair_timestamp   = ProtoField.uint64("solana.repair.timestamp",   "Timestamp")
+
 solana_proto.fields = {
     sol_slot,
     sol_transaction,
@@ -286,6 +322,15 @@ shreds_proto.fields = {
     shred_data_content,
 }
 
+repair_proto.fields = {
+    repair_message_id,
+    repair_shred_index,
+    repair_nonce,
+    repair_sender,
+    repair_recipient,
+    repair_timestamp,
+}
+
 function gossip.dissector (tvb, pinfo, tree)
     local subtree = tree:add(gossip, tvb())
 
@@ -334,10 +379,54 @@ function shreds_proto.dissector (tvb, pinfo, tree)
     end
 end
 
+function repair_proto.dissector (tvb, pinfo, tree)
+    local subtree = tree:add(gossip, tvb())
+
+    local message_id = tvb(0,4):le_uint()
+    local message_name = repair_message_names[message_id] or "Unknown"
+    subtree:add_le(repair_message_id, tvb(0,4)):append_text(" (" .. message_name .. ")")
+    tvb = tvb(4)
+    subtree:set_text("Solana Repair " .. message_name)
+
+    if message_id == REPAIR_LEGACY_WINDOW_INDEX or message_id == REPAIR_LEGACY_HIGHEST_WINDOW_INDEX then
+        tvb = solana_gossip_disect_contact_info(tvb, subtree)
+        subtree:add_le(sol_slot,           tvb(0,8))
+        subtree:add_le(repair_shred_index, tvb(8,8))
+    elseif message_id == REPAIR_LEGACY_ORPHAN then
+        tvb = solana_gossip_disect_contact_info(tvb, subtree)
+        subtree:add_le(sol_slot,           tvb(0,8))
+    elseif message_id == REPAIR_LEGACY_WINDOW_INDEX_WITH_NONCE or message_id == REPAIR_LEGACY_HIGHEST_WINDOW_INDEX_WITH_NONCE then
+        tvb = solana_gossip_disect_contact_info(tvb, subtree)
+        subtree:add_le(sol_slot,           tvb(0,8))
+        subtree:add_le(repair_shred_index, tvb(8,8))
+        subtree:add_le(repair_nonce,       tvb(16,4))
+    elseif message_id == REPAIR_LEGACY_ORPHAN_WITH_NONCE or message_id == REPAIR_LEGACY_ANCESTOR_HASHES then
+        tvb = solana_gossip_disect_contact_info(tvb, subtree)
+        subtree:add_le(sol_slot,           tvb(0,8))
+        subtree:add_le(repair_nonce,       tvb(8,4))
+    elseif message_id == REPAIR_PONG then
+        solana_gossip_disect_ping(tvb, subtree)
+    elseif message_id == REPAIR_WINDOW_INDEX or message_id == REPAIR_HIGHEST_WINDOW_INDEX then
+        tvb = solana_repair_disect_header(tvb, subtree)
+        subtree:add_le(sol_slot,           tvb(0,8))
+        subtree:add_le(repair_shred_index, tvb(8,8))
+    elseif message_id == REPAIR_ORPHAN or message_id == REPAIR_ANCESTOR_HASHES then
+        tvb = solana_repair_disect_header(tvb, subtree)
+        subtree:add_le(sol_slot,           tvb(0,8))
+    else
+        error("unsupported repair request: " .. message_id)
+    end
+end
+
+-- Assuming base port 8000
 local udp_port = DissectorTable.get("udp.port")
 udp_port:add(8000, gossip)
 udp_port:add(8001, shreds_proto)
 udp_port:add(8002, shreds_proto)
+
+-- Most nodes use these repair ports. Not reliable
+udp_port:add(8008, repair_proto)
+udp_port:add(8009, repair_proto)
 
 ---------------------------------------
 -- Helpers                           --
@@ -457,20 +546,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
     tvb = tvb(4)
 
     if data_id == GOSSIP_CRDS_CONTACT_INFO then
-        tree:add(gossip_pubkey, tvb(0,32))
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_gossip, tvb(32), tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tvu, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tvu_fwd, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_repair, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu_fwd, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu_vote, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_rpc, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_rpc_pubsub, tvb, tree)
-        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_serve_repair, tvb, tree)
-        tree:add_le(gossip_wallclock, tvb(0,8))
-        tree:add_le(sol_shred_version, tvb(8,2))
-        if tvb:len() > 10 then tvb = tvb(10) end
+        tvb = solana_gossip_disect_contact_info(tvb, tree)
     elseif data_id == GOSSIP_CRDS_VOTE then
         tree:add(gossip_vote_index, tvb(0,1))
         tree:add(gossip_vote_pubkey, tvb(1,32))
@@ -567,6 +643,24 @@ function solana_gossip_disect_crds_data (tvb, tree)
         error("unsupported data ID")
     end
 
+    return tvb
+end
+
+function solana_gossip_disect_contact_info (tvb, tree)
+    tree:add(gossip_pubkey, tvb(0,32))
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_gossip, tvb(32), tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tvu, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tvu_fwd, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_repair, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu_fwd, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu_vote, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_rpc, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_rpc_pubsub, tvb, tree)
+    tvb = solana_gossip_disect_socket_addr(gossip_contact_info_serve_repair, tvb, tree)
+    tree:add_le(gossip_wallclock, tvb(0,8))
+    tree:add_le(sol_shred_version, tvb(8,2))
+    if tvb:len() > 10 then tvb = tvb(10) end
     return tvb
 end
 
@@ -733,4 +827,13 @@ function solana_disect_data_shred (tvb, tree)
     flags_node
         :add(shred_data_last, tvb(2,1), bit.band(flags, 0xC0) ~= 0)
         :set_generated()
+end
+
+function solana_repair_disect_header (tvb, tree)
+    tree:add   (sol_signature,    tvb(0,64))
+    tree:add   (repair_sender,    tvb(64,32))
+    tree:add   (repair_recipient, tvb(96,32))
+    tree:add_le(repair_timestamp, tvb(128,8))
+    tree:add_le(repair_nonce,     tvb(136,4))
+    return tvb(140)
 end

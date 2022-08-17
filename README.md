@@ -47,11 +47,11 @@ To activate, hit Cmd+Shift+L or restart Wireshark.
   - ✅ Legacy Data Shreds
   - ❌ Merkle Coding Shreds
   - ❌ Merkle Data Shreds
-- 🚧 Repair
-  - ❌ Legacy types
-  - ❌ Pong
-  - ❌ WindowIndex
-  - ❌ HighestWindowIndex
-  - ❌ Orphan
-  - ❌ AncestorHashes
+- ✅ Repair
+  - ✅ Legacy types
+  - ✅ Pong
+  - ✅ WindowIndex
+  - ✅ HighestWindowIndex
+  - ✅ Orphan
+  - ✅ AncestorHashes
 - ❌ TPU
