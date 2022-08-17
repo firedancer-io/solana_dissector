@@ -15,6 +15,19 @@ curl --output /Applications/Wireshark.app/Contents/PlugIns/wireshark/solana.lua 
 
 To activate, hit Cmd+Shift+L or restart Wireshark.
 
+## Ports
+
+Solana nodes allocate ports in a block starting at an arbitrary number.
+To discover endpoints, nodes use the gossip protocol to send each other port mappings.
+
+This plugin doesn't implement mappings yet and instead hardcodes ports.
+
+- 8000: Gossip
+- 8001, 8002: Shreds
+- 8008, 8009: Repair
+
+This might get fixed in the future, but for now, you have to use "Decode As" to select a protocol if the hardcoded mapping fails.
+
 ## Development
 
 - 🚧 Gossip protocol
