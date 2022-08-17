@@ -433,11 +433,9 @@ function solana_gossip_disect_crds_data (tvb, tree)
         local num_hashes = tvb(32,4):le_uint() -- uint64 broken
         tvb = tvb(40)
         for i=1,num_hashes,1 do
-            local subtree = tree:add(gossip_hash_event, tvb(0,40))
+            local subtree
+            tvb, subtree = solana_gossip_disect_hash_event(tvb, tree)
             subtree:set_text(event_name)
-            subtree:add_le(gossip_hash_slot, tvb(0,8))
-            subtree:add   (gossip_hash_hash, tvb(8,32))
-            tvb = tvb(40)
         end
         tree:add_le(gossip_wallclock, tvb(0,8))
         if tvb:len() > 8 then tvb = tvb(8) end
@@ -474,6 +472,23 @@ function solana_gossip_disect_crds_data (tvb, tree)
         tree:add_le(gossip_wallclock, tvb(32,8))
         tree:add_le(gossip_node_instance_timestamp, tvb(40,8))
         tree:add_le(gossip_node_instance_token,     tvb(48,8))
+        if tvb:len() > 56 then tvb = tvb(56) end
+    elseif data_id == GOSSIP_CRDS_INC_SNAPSHOT_HASHES then
+        tree:add   (gossip_pubkey,    tvb(0,32))
+        local event
+        tvb, event = solana_gossip_disect_hash_event(tvb, tree)
+        event:set_text("Base Snapshot")
+
+        local num_hashes = tvb(0,4):le_uint()
+        tvb = tvb(8)
+        for i=1,num_hashes,1 do
+            local event
+            tvb, event = solana_gossip_disect_hash_event(tvb, tree)
+            event:set_text("Incremental Snapshot #" .. i-1)
+        end
+
+        tree:add_le(gossip_wallclock, tvb(0,8))
+        if tvb:len() > 8 then tvb = tvb(8) end
     else
         error("unsupported data ID")
     end
@@ -545,6 +560,14 @@ function solana_gossip_disect_uncompressed_slots (tvb, tree)
     tvb = tvb(16)
 
     subtree:set_len(before_len - tvb:len())
+    return tvb, subtree
+end
+
+function solana_gossip_disect_hash_event (tvb, tree)
+    local subtree = tree:add(gossip_hash_event, tvb(0,40))
+    subtree:add_le(gossip_hash_slot, tvb(0,8))
+    subtree:add   (gossip_hash_hash, tvb(8,32))
+    tvb = tvb(40)
     return tvb, subtree
 end
 

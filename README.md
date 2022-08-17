@@ -41,7 +41,7 @@ To activate, hit Cmd+Shift+L or restart Wireshark.
     - ✅ Version
     - ✅ Node Instance
     - ❌ Duplicate Shred
-    - ❌ Incremental Snapshot Hashes
+    - ✅ Incremental Snapshot Hashes
 - ❌ TVU
 - ❌ Repair
 - ❌ TPU
