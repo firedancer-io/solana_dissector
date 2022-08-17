@@ -34,7 +34,7 @@ local gossip_message_names = {
 local gossip_ping_from = ProtoField.bytes("solana.gossip.ping.from", "From")
 local gossip_ping_token = ProtoField.bytes("solana.gossip.ping.token", "Token")
 local gossip_ping_signature = ProtoField.bytes("solana.gossip.ping.signature", "Signature")
-local gossip_pull_resp_pubkey = ProtoField.bytes("solana.gossip.pull_response.pubkey", "Pubkey")
+local gossip_pull_resp_pubkey = ProtoField.none("solana.gossip.pull_response.pubkey", "Pubkey")
 
 local gossip_crds_value = ProtoField.none("solana.gossip.crds_value", "Value")
 local gossip_crds_value_signature = ProtoField.bytes("solana.gossip.crds_value.signature", "Signature")
@@ -196,21 +196,16 @@ function gossip.dissector (tvb, pinfo, tree)
     subtree:add_le(gossip_message_id, tvb(0,4)):append_text(" (" .. message_name .. ")")
     tvb = tvb(4)
 
+    local disect
     if message_id == GOSSIP_MSG_PULL_REQ then
-        -- disect_crds_filter(tvb, subtree)
+        disect = solana_gossip_disect_pull_req
     elseif message_id == GOSSIP_MSG_PULL_RESP or message_id == GOSSIP_MSG_PUSH then
-        subtree:add(gossip_pull_resp_pubkey, tvb(0,32))
-        local num_values = tvb(32,4):le_uint() -- 8 bytes broken
-        tvb = tvb(40)
-        for i=1,num_values,1 do
-            local value = subtree:add(gossip_crds_value, tvb(0,64)):append_text(" #" .. i-1)
-            value:add(gossip_crds_value_signature, tvb(0,64))
-            tvb = disect_crds_data(tvb(64), value)
-        end
+        disect = solana_gossip_disect_pull_resp
     elseif message_id == GOSSIP_MSG_PING or message_id == GOSSIP_MSG_PONG then
-        subtree:add(gossip_ping_from, tvb(0,32))
-        subtree:add(gossip_ping_token, tvb(32,32))
-        subtree:add(gossip_ping_signature, tvb(64,64))
+        disect = solana_gossip_disect_ping
+    end
+    if disect then
+        disect(tvb, subtree)
     end
 end
 
@@ -235,8 +230,8 @@ local function base58_encode(s)
 	local nt = {}
 	local dt = {}
 	local more = true
-	for i = 1, #s do
-		b = byte(s, i)
+	for i=0, s:len()-1 do
+		b = s:get_index(i)
 		if more and b == 0 then
 			zn = zn + 1
 		else
@@ -244,7 +239,7 @@ local function base58_encode(s)
 		end
 		nt[i] = b
 	end
-	if #s == zn then
+	if s:len() == zn then
 		return string.rep('1', zn)
 	end
 	more = true
@@ -289,8 +284,29 @@ end
 -- Data types                        --
 ---------------------------------------
 
+function solana_gossip_disect_ping (tvb, subtree)
+    subtree:add(gossip_ping_from, tvb(0,32))
+    subtree:add(gossip_ping_token, tvb(32,32))
+    subtree:add(gossip_ping_signature, tvb(64,64))
+end
+
+function solana_gossip_disect_pull_req (tvb, subtree)
+    -- TODO
+end
+
+function solana_gossip_disect_pull_resp (tvb, subtree)
+    solana_disect_pubkey(tvb(0,32), subtree, gossip_pull_resp_pubkey)
+    local num_values = tvb(32,4):le_uint() -- 8 bytes broken
+    tvb = tvb(40)
+    for i=1,num_values,1 do
+        local value = subtree:add(gossip_crds_value, tvb(0,64)):append_text(" #" .. i-1)
+        value:add(gossip_crds_value_signature, tvb(0,64))
+        tvb = solana_gossip_disect_crds_data(tvb(64), value)
+    end
+end
+
 -- Pops a gossip CrdsData off tvb and appends items to tree.
-local function disect_crds_data (tvb, tree)
+function solana_gossip_disect_crds_data (tvb, tree)
     local data_id = tvb(0,4):le_uint()
     local data_name = gossip_crds_names[data_id] or "Unknown"
     tree:add_le(gossip_crds_id, tvb(0,4)):append_text(" (" .. data_name .. ")")
@@ -298,22 +314,22 @@ local function disect_crds_data (tvb, tree)
 
     if data_id == GOSSIP_CRDS_CONTACT_INFO then
         tree:add(gossip_pubkey, tvb(0,32))
-        tvb = disect_socket_addr(gossip_contact_info_gossip, tvb(32), tree)
-        tvb = disect_socket_addr(gossip_contact_info_tvu, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_tvu_fwd, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_repair, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_tpu, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_tpu_fwd, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_tpu_vote, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_rpc, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_rpc_pubsub, tvb, tree)
-        tvb = disect_socket_addr(gossip_contact_info_serve_repair, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_gossip, tvb(32), tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tvu, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tvu_fwd, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_repair, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu_fwd, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_tpu_vote, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_rpc, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_rpc_pubsub, tvb, tree)
+        tvb = solana_gossip_disect_socket_addr(gossip_contact_info_serve_repair, tvb, tree)
         tree:add_le(gossip_wallclock, tvb(0,8))
         tree:add_le(sol_shred_version, tvb(8,2))
     elseif data_id == GOSSIP_CRDS_VOTE then
         tree:add(gossip_vote_index, tvb(0,1))
         tree:add(gossip_vote_pubkey, tvb(1,32))
-        tvb, tx = disect_transaction(tvb(33), tree)
+        tvb, tx = solana_gossip_disect_transaction(tvb(33), tree)
         tx:set_text("Vote Transaction")
         tree:add_le(gossip_wallclock, tvb(0,8))
         if tvb:len() > 8 then tvb = tvb(8) end
@@ -350,7 +366,7 @@ local function disect_crds_data (tvb, tree)
         end
         tree:add_le(gossip_wallclock, tvb(0,8))
     elseif data_id == GOSSIP_CRDS_LEGACY_VERSION or data_id == GOSSIP_CRDS_VERSION then
-        disect_pubkey(tvb(0,32), tree)
+        solana_disect_pubkey(tvb(0,32), tree)
         tree:add_le(gossip_wallclock,     tvb(32,8))
         tree:add_le(gossip_version_major, tvb(40,2))
         tree:add_le(gossip_version_minor, tvb(42,2))
@@ -375,7 +391,7 @@ local function disect_crds_data (tvb, tree)
 end
 
 -- Pops a gossip SocketAddr off tvb and appends a subtree to tree.
-local function disect_socket_addr (entry, tvb, tree)
+function solana_gossip_disect_socket_addr (entry, tvb, tree)
     local ip_type = tvb(0,4):le_uint()
     local return_tvb, ip_entry, ip_tvb, port_tvb
     if ip_type == 0 then
@@ -398,7 +414,7 @@ local function disect_socket_addr (entry, tvb, tree)
 end
 
 -- Pops a transaction off tvb and appends a subtree to tree.
-local function disect_transaction (tvb, tree, name)
+function solana_gossip_disect_transaction (tvb, tree, name)
     local before_len = tvb:len()
     local subtree = tree:add(sol_transaction, tvb)
 
@@ -418,18 +434,18 @@ local function disect_transaction (tvb, tree, name)
     local num_keys = tvb(0,1):le_uint()
     tvb = tvb(1)
     for i=1,num_keys,1 do
-        disect_pubkey(tvb(0,32), subtree):append_text(" #" .. i-1)
+        solana_disect_pubkey(tvb(0,32), subtree):append_text(" #" .. i-1)
         tvb = tvb(32)
     end
 
-    disect_pubkey(tvb(0,32), subtree, sol_recent_blockhash)
+    solana_disect_pubkey(tvb(0,32), subtree, sol_recent_blockhash)
     tvb = tvb(32)
 
     local num_invocs = tvb(0,1):le_uint()
     tvb = tvb(1)
     for i=1,num_invocs,1 do
         local invoc
-        tvb, invoc = disect_invoc (tvb, subtree)
+        tvb, invoc = solana_disect_invoc (tvb, subtree)
         invoc:append_text(" #" .. i-1)
     end
 
@@ -438,7 +454,7 @@ local function disect_transaction (tvb, tree, name)
 end
 
 -- Pops a transaction instruction off tvb and appends a subtree to tree.
-local function disect_invoc (tvb, tree)
+function solana_disect_invoc (tvb, tree)
     local before_len = tvb:len()
     local subtree = tree:add(sol_invoc, tvb)
 
@@ -462,15 +478,15 @@ local function disect_invoc (tvb, tree)
 end
 
 -- Pops a pubkey or hash off tvb and appends it to tree.
-local function disect_pubkey (tvb, tree, entry)
+function solana_disect_pubkey (tvb, tree, entry)
     tvb = tvb(0,32)
     return tree:add(entry or sol_pubkey, tvb):
-        append_text(": " .. base58_encode(tvb:bytes():raw()))
+        append_text(": " .. base58_encode(tvb:bytes()))
 end
 
 -- Pops a signature off tvb and appends it to tree.
-local function disect_signature (tvb, tree, entry)
+function solana_disect_signature (tvb, tree, entry)
     tvb = tvb(0,64)
     return tree:add(entry or sol_signature, tvb):
-        append_text(": " .. base58_encode(tvb:bytes():raw()))
+        append_text(": " .. base58_encode(tvb:bytes()))
 end
