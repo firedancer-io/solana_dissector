@@ -21,8 +21,8 @@ To activate, hit Cmd+Shift+L or restart Wireshark.
   - Messages
     - ❌ Pull Request
     - ✅ Pull Response
-    - ❌ Push Message
-    - ❌ Prune Message
+    - ✅ Push Message
+    - ✅ Prune Message
     - ✅ Ping Message
     - ✅ Pong Message
   - Types

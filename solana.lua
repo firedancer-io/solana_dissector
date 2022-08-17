@@ -110,6 +110,10 @@ local gossip_version_features = ProtoField.uint32("solana.gossip.version.feature
 local gossip_node_instance_timestamp = ProtoField.uint64("solana.gossip.node_instance.timestamp", "Instance Creation Timestamp", base.DEC)
 local gossip_node_instance_token     = ProtoField.uint64("solana.gossip.node_instance.token",     "Instance Token",              base.HEX)
 
+local gossip_prune_pubkey      = ProtoField.bytes("solana.gossip.prune.pubkey", "Pubkey")
+local gossip_prune_target      = ProtoField.bytes("solana.gossip.prune.target", "Target")
+local gossip_prune_destination = ProtoField.bytes("solana.gossip.prune.dest",   "Destination")
+
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
 local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
@@ -141,6 +145,10 @@ gossip.fields = {
     gossip_message_id,
     -- Pull response
     gossip_pull_resp_pubkey,
+    -- Prune
+    gossip_prune_pubkey,
+    gossip_prune_target,
+    gossip_prune_destination,
     -- Ping
     gossip_ping_from,
     gossip_ping_token,
@@ -205,6 +213,8 @@ function gossip.dissector (tvb, pinfo, tree)
         disect = solana_gossip_disect_pull_req
     elseif message_id == GOSSIP_MSG_PULL_RESP or message_id == GOSSIP_MSG_PUSH then
         disect = solana_gossip_disect_pull_resp
+    elseif message_id == GOSSIP_MSG_PRUNE then
+        disect = solana_gossip_disect_prune
     elseif message_id == GOSSIP_MSG_PING or message_id == GOSSIP_MSG_PONG then
         disect = solana_gossip_disect_ping
     end
@@ -262,6 +272,20 @@ function solana_gossip_disect_pull_resp (tvb, subtree)
         value:add(gossip_crds_value_signature, tvb(0,64))
         tvb = solana_gossip_disect_crds_data(tvb(64), value)
     end
+end
+
+function solana_gossip_disect_prune (tvb, subtree)
+    subtree:add(gossip_prune_pubkey, tvb(0,32))
+    subtree:add(gossip_prune_pubkey, tvb(32,32))
+    local num_prune = tvb(64,4):le_uint()
+    tvb = tvb(72)
+    for i=1,num_prune,1 do
+        subtree:add(gossip_prune_target, tvb(0,32))
+        tvb = tvb(32)
+    end
+    subtree:add(sol_signature, tvb(0,64))
+    subtree:add(gossip_prune_destination, tvb(64,32))
+    subtree:add_le(gossip_wallclock, tvb(96,8))
 end
 
 -- Pops a gossip CrdsData off tvb and appends items to tree.
