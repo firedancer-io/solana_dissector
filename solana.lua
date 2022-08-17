@@ -16,6 +16,7 @@ end
 local solana_proto = Proto("Solana.Core",    "Solana Core Protocol")
 local gossip       = Proto("Solana.Gossip",  "Solana Gossip Protocol")
 local shreds_proto = Proto("Solana.Shreds",  "Solana Shreds Protocol")
+local entry_proto  = Proto("Solana.Entry",   "Solana Block Entries")
 local repair_proto = Proto("Solana.Repair",  "Solana Repair Protocol")
 local tpu_proto    = Proto("Solana.TPU.UDP", "Solana TPU Protocol (UDP)")
 
@@ -164,7 +165,7 @@ local shred_coding_position    = ProtoField.uint16("solana.shred.coding.position
 
 local shred_data_parent_offset = ProtoField.uint16("solana.shred.data.parent_offset", "Parent Offset")
 local shred_data_flags         = ProtoField.uint8 ("solana.shred.data.flags",         "Flags", base.HEX)
-local shred_data_tick_ref_mask = ProtoField.uint8 ("solana.shred.data.ref_tick",      "Reference Tick")
+local shred_data_tick_ref      = ProtoField.uint8 ("solana.shred.data.ref_tick",      "Reference Tick")
 local shred_data_complete      = ProtoField.bool  ("solana.shred.data.completed",     "Complete")
 local shred_data_last          = ProtoField.bool  ("solana.shred.data.last",          "Last Shred in Slot")
 local shred_data_size          = ProtoField.uint16("solana.shred.data.size",          "Size")
@@ -204,6 +205,9 @@ local repair_nonce       = ProtoField.uint32("solana.repair.nonce",       "Nonce
 local repair_sender      = ProtoField.bytes ("solana.repair.sender",      "Sender")
 local repair_recipient   = ProtoField.bytes ("solana.repair.recipient",   "Recipient")
 local repair_timestamp   = ProtoField.uint64("solana.repair.timestamp",   "Timestamp")
+
+local entry_hashes = ProtoField.uint64("solana.entry.num_hashes", "SHA-256 Iterations")
+local entry_hash   = ProtoField.bytes ("solana.entry.hash",       "Entry Hash")
 
 solana_proto.fields = {
     sol_slot,
@@ -316,7 +320,7 @@ shreds_proto.fields = {
     ------- Data Header
     shred_data_parent_offset,
     shred_data_flags,
-    shred_data_tick_ref_mask,
+    shred_data_tick_ref,
     shred_data_complete,
     shred_data_last,
     shred_data_size,
@@ -333,6 +337,7 @@ repair_proto.fields = {
 }
 
 function gossip.dissector (tvb, pinfo, tree)
+    pinfo.cols.protocol:set("SolGossip")
     local subtree = tree:add(gossip, tvb())
 
     local message_id = tvb(0,4):le_uint()
@@ -357,31 +362,49 @@ function gossip.dissector (tvb, pinfo, tree)
     end
 end
 
+function shreds_proto.init ()
+    -- Serves to reassemble messages
+    --   table<slot, either<bool, table<index, msg>>>
+    --
+    -- table<3, true> means that slot 3 has been reassembled already
+    -- msg is {bytes: <Data> off: <number>}
+    fragments = {}
+end
+
 function shreds_proto.dissector (tvb, pinfo, tree)
+    pinfo.cols.protocol:set("SolShred")
     local subtree = tree:add(gossip, tvb(), "Solana Shred")
 
     subtree:add(sol_signature, tvb(0,64))
     local variant_node = subtree:add(shred_variant, tvb(64,1))
     local variant = tvb(64,1):uint()
-    subtree:add_le(sol_slot, tvb(65,8))
-    subtree:add_le(shred_index, tvb(73,4))
-    subtree:add_le(shred_version, tvb(77,2))
+    subtree:add_le(sol_slot,            tvb(65,8))
+    subtree:add_le(shred_index,         tvb(73,4))
+    subtree:add_le(shred_version,       tvb(77,2))
     subtree:add_le(shred_fec_set_index, tvb(79,4))
+
+    local _slot  = tvb(65,8):le_uint64()
+    local _index = tvb(73,4):le_uint()
+    local shred_desc = "Slot="  .. _slot ..
+        " Index=" .. string.format("%04d", _index)
 
     tvb = tvb(83)
     if variant == 0xA5 then
         variant_node:append_text(" (Data)")
-        solana_disect_data_shred(tvb, subtree)
+        pinfo.cols.info:set("Data Shred   " .. shred_desc)
+        solana_disect_data_shred(tvb, pinfo, subtree, _slot, _index)
     elseif variant == 0x5A then
         variant_node:append_text(" (Coding)")
-        solana_disect_coding_shred(tvb, subtree)
+        pinfo.cols.info:set("Coding Shred " .. shred_desc)
+        solana_disect_coding_shred(tvb, pinfo, subtree)
     else
         error("unsupported shred variant")
     end
 end
 
 function repair_proto.dissector (tvb, pinfo, tree)
-    local subtree = tree:add(gossip, tvb())
+    pinfo.cols.protocol:set("SolRepair")
+    local subtree = tree:add(repair_proto, tvb())
 
     local message_id = tvb(0,4):le_uint()
     local message_name = repair_message_names[message_id] or "Unknown"
@@ -422,6 +445,28 @@ end
 function tpu_proto.dissector (tvb, pinfo, tree)
     local subtree = tree:add(tpu_proto, tvb())
     solana_disect_transaction(tvb, tree)
+end
+
+function entry_proto.dissector (tvb, pinfo, tree)
+    local tree = tree:add(entry_proto, tvb())
+
+    pinfo.cols.protocol:set("SolEntry")
+    tree:add(entry_hashes, tvb(0,8))
+    if tvb(4,4):le_uint() ~= 0 then
+        -- >2^32 serial SHA-256 hashes in double-digit milliseconds is probably impossible
+        error("extreme hash count in entry, probably misaligned")
+    end
+    tree:add(entry_hash,   tvb(8,32))
+    local num_txns = tvb(40,4):le_uint()
+    if tvb(44,4):le_uint() ~= 0 or num_txns > 500000 then
+        error("extreme tx count in entry, probably misaligned")
+    end
+    tvb = tvb(48)
+    for i=1,num_txns,1 do
+        local tx
+        tvb, tx = solana_disect_transaction(tvb, tree)
+        tvb:append_text(" #" .. i-1)
+    end
 end
 
 -- Assuming base port 8000
@@ -809,14 +854,14 @@ function solana_disect_invoc (tvb, tree)
     return tvb, subtree
 end
 
-function solana_disect_coding_shred (tvb, tree)
+function solana_disect_coding_shred (tvb, pinfo, tree)
     local subtree = tree:add(shred_coding, tvb)
     subtree:add_le(shred_coding_num_data,   tvb(0,2))
     subtree:add_le(shred_coding_num_coding, tvb(2,2))
     subtree:add_le(shred_coding_position,   tvb(4,2))
 end
 
-function solana_disect_data_shred (tvb, tree)
+function solana_disect_data_shred (tvb, pinfo, tree, slot, index)
     local subtree = tree:add(shred_data, tvb)
     subtree:add_le(shred_data_parent_offset, tvb(0,2))
     local flags_node = subtree:add(shred_data_flags, tvb(2,1))
@@ -824,16 +869,59 @@ function solana_disect_data_shred (tvb, tree)
     local content_size = tvb(3,2):le_uint() - 88
     subtree:add_le(shred_data_content,       tvb(5,content_size))
 
-    local flags = tvb(2,1):uint()
+    local flags       = tvb(2,1):uint()
+    local tick_ref    = bit.band(flags, 0x3F)
+    local is_complete = bit.band(flags, 0x40) ~= 0
+    local is_last     = bit.band(flags, 0xC0) == 0xC0
     flags_node
-        :add(shred_data_tick_ref_mask, tvb(2,1), bit.band(flags, 0x3F))
+        :add(shred_data_tick_ref, tvb(2,1), tick_ref)
         :set_generated()
     flags_node
-        :add(shred_data_complete, tvb(2,1), bit.band(flags, 0x40) ~= 0)
+        :add(shred_data_complete, tvb(2,1), is_complete)
         :set_generated()
     flags_node
-        :add(shred_data_last, tvb(2,1), bit.band(flags, 0xC0) ~= 0)
+        :add(shred_data_last, tvb(2,1), is_last)
         :set_generated()
+
+    -- Do block reassembly
+    if pinfo.visited then
+        return
+    end
+    if fragments[slot] == nil then
+        fragments[slot] = {}
+    elseif fragments[slot] == true then
+        return
+    end
+    if fragments[slot][index] == nil then
+        fragments[slot][index] = {}
+    else
+        return
+    end
+    local frag = fragments[slot][index]
+    frag.data = tvb(5,content_size):bytes()
+    frag.off  = tvb(0,2):le_uint()
+
+    if is_last then
+        local message = ByteArray.new()
+        local ptr = 0
+        local frags = fragments[slot]
+        fragments[slot] = true -- drop table and set placeholder
+        for i=0,index,1 do
+            local frag = frags[i]
+            if frag ~= nil then
+                if frag.off > ptr then
+                    local zeros = ByteArray.new()
+                    zeros:set_size(frag.off - ptr)
+                    ptr = ptr + zeros:len()
+                    message:append(zeros)
+                end
+                ptr = ptr + frag.data:len()
+                message:append(frag.data)
+            end
+        end
+        print("Reassembled slot " .. slot)
+        entry_proto.dissector(message:tvb(), pinfo, tree)
+    end
 end
 
 function solana_repair_disect_header (tvb, tree)

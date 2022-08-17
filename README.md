@@ -28,6 +28,14 @@ This plugin doesn't implement mappings yet and instead hardcodes ports.
 
 This might get fixed in the future, but for now, you have to use "Decode As" to select a protocol if the hardcoded mapping fails.
 
+## Security
+
+This dissector is written in pure Lua, so it can be safely used on any packet capture.
+Crafted captures might cause Wireshark to crash (gracefully) or run out-of-memory. This is considered a bug that I will fix, time permitting.
+
+This plugin has limited support for reassembling blocks from shreds.
+Signature verification is not supported so the reassembled output is not trustworthy.
+
 ## Development
 
 - 🚧 Gossip protocol
