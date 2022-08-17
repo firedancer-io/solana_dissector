@@ -13,10 +13,11 @@ end
 -- Protocols                         --
 ---------------------------------------
 
-local solana_proto = Proto("Solana.Core",   "Solana Core Protocol")
-local gossip       = Proto("Solana.Gossip", "Solana Gossip Protocol")
-local shreds_proto = Proto("Solana.Shreds", "Solana Shreds Protocol")
-local repair_proto = Proto("Solana.Repair", "Solana Repair Protocol")
+local solana_proto = Proto("Solana.Core",    "Solana Core Protocol")
+local gossip       = Proto("Solana.Gossip",  "Solana Gossip Protocol")
+local shreds_proto = Proto("Solana.Shreds",  "Solana Shreds Protocol")
+local repair_proto = Proto("Solana.Repair",  "Solana Repair Protocol")
+local tpu_proto    = Proto("Solana.TPU.UDP", "Solana TPU Protocol (UDP)")
 
 ---------------------------------------
 -- Data Types                        --
@@ -418,11 +419,17 @@ function repair_proto.dissector (tvb, pinfo, tree)
     end
 end
 
+function tpu_proto.dissector (tvb, pinfo, tree)
+    local subtree = tree:add(tpu_proto, tvb())
+    solana_disect_transaction(tvb, tree)
+end
+
 -- Assuming base port 8000
 local udp_port = DissectorTable.get("udp.port")
 udp_port:add(8000, gossip)
 udp_port:add(8001, shreds_proto)
 udp_port:add(8002, shreds_proto)
+udp_port:add(8003, tpu_proto)
 
 -- Most nodes use these repair ports. Not reliable
 udp_port:add(8008, repair_proto)
@@ -550,7 +557,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
     elseif data_id == GOSSIP_CRDS_VOTE then
         tree:add(gossip_vote_index, tvb(0,1))
         tree:add(gossip_vote_pubkey, tvb(1,32))
-        tvb, tx = solana_gossip_disect_transaction(tvb(33), tree)
+        tvb, tx = solana_disect_transaction(tvb(33), tree)
         tx:set_text("Vote Transaction")
         tree:add_le(gossip_wallclock, tvb(0,8))
         if tvb:len() > 8 then tvb = tvb(8) end
@@ -740,7 +747,7 @@ function solana_gossip_disect_hash_event (tvb, tree)
 end
 
 -- Pops a transaction off tvb and appends a subtree to tree.
-function solana_gossip_disect_transaction (tvb, tree, name)
+function solana_disect_transaction (tvb, tree, name)
     local before_len = tvb:len()
     local subtree = tree:add(sol_transaction, tvb)
 

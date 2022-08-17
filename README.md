@@ -67,4 +67,5 @@ This might get fixed in the future, but for now, you have to use "Decode As" to 
   - ✅ HighestWindowIndex
   - ✅ Orphan
   - ✅ AncestorHashes
-- ❌ TPU
+- ✅ TPU (UDP)
+- ❌ TPU (QUIC)
