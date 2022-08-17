@@ -123,6 +123,16 @@ local gossip_bloom_bits   = ProtoField.bytes ("solana.gossip.bloom.bits",  "Bit 
 local gossip_bloom_size   = ProtoField.uint64("solana.gossip.bloom.size",  "Size in bits")
 local gossip_bloom_ones   = ProtoField.uint64("solana.gossip.bloom.ones",  "Number of one bits")
 
+local gossip_epoch_slots_index        = ProtoField.uint8 ("solana.gossip.epoch_slots.index",        "Index")
+local gossip_epoch_slots_slots        = ProtoField.none  ("solana.gossip.epoch_slots.slots",        "Slots")
+local gossip_epoch_slots_first_slot   = ProtoField.uint64("solana.gossip.epoch_slots.first_slot",   "First Slot")
+local gossip_epoch_slots_count        = ProtoField.uint64("solana.gossip.epoch_slots.count",        "Slot Count")
+local gossip_epoch_slots_uncompressed = ProtoField.bytes ("solana.gossip.epoch_slots.uncompressed", "Uncompressed Data")
+local gossip_epoch_slots_bitvec       = ProtoField.bytes ("solana.gossip.epoch_slots.bitvec",       "Bit vector")
+local gossip_epoch_slots_bitvec_size  = ProtoField.uint64("solana.gossip.epoch_slots.bitvec",       "Bit vector size")
+local gossip_epoch_slots_bitvec_ones  = ProtoField.uint64("solana.gossip.epoch_slots.bitvec",       "Bit vector ones")
+local gossip_epoch_slots_flate2       = ProtoField.bytes ("solana.gossip.epoch_slots.flate2",       "Flate2 Data")
+
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
 local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
@@ -130,7 +140,7 @@ local sol_tx_sigs_req       = ProtoField.uint8 ("solana.tx.sigs_req",         "R
 local sol_tx_signed_ro      = ProtoField.uint8 ("solana.tx.sigs.ro",          "Signed read-only count",   base.DEC)
 local sol_tx_unsigned_ro    = ProtoField.uint8 ("solana.tx.sigs.rw",          "Unsigned read-only count", base.DEC)
 local sol_recent_blockhash  = ProtoField.bytes ("solana.tx.recent_blockhash", "Recent blockhash")
-local sol_shred_version     = ProtoField.uint16("solana.shred_version")
+local sol_shred_version     = ProtoField.uint16("solana.shred_version",       "Shred Version")
 local sol_invoc             = ProtoField.none  ("solana.insn",                "Instruction")
 local sol_invoc_program_idx = ProtoField.uint8 ("solana.insn.program_index",  "Program Index", base.DEC)
 local sol_invoc_account_idx = ProtoField.uint8 ("solana.insn.account_index",  "Account Index", base.DEC)
@@ -208,6 +218,16 @@ gossip.fields = {
     gossip_hash_event,
     gossip_hash_slot,
     gossip_hash_hash,
+    -- CRDS EpochSlots
+    gossip_epoch_slots_index,
+    gossip_epoch_slots_slots,
+    gossip_epoch_slots_first_slot,
+    gossip_epoch_slots_count,
+    gossip_epoch_slots_uncompressed,
+    gossip_epoch_slots_bitvec,
+    gossip_epoch_slots_bitvec_size,
+    gossip_epoch_slots_bitvec_ones,
+    gossip_epoch_slots_flate2,
     -- CRDS Version
     gossip_version_major,
     gossip_version_minor,
@@ -376,6 +396,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
         tvb = solana_gossip_disect_socket_addr(gossip_contact_info_serve_repair, tvb, tree)
         tree:add_le(gossip_wallclock, tvb(0,8))
         tree:add_le(sol_shred_version, tvb(8,2))
+        if tvb:len() > 10 then tvb = tvb(10) end
     elseif data_id == GOSSIP_CRDS_VOTE then
         tree:add(gossip_vote_index, tvb(0,1))
         tree:add(gossip_vote_pubkey, tvb(1,32))
@@ -389,14 +410,18 @@ function solana_gossip_disect_crds_data (tvb, tree)
         tree:add_le(gossip_lowest_slot_root, tvb(33,8))
         tree:add_le(gossip_lowest_slot_lowest, tvb(41,8))
         local num_slots = tvb(49,4):le_uint() -- uint64 broken
-
-        local subtree = tree:add(gossip_lowest_slot_slots, tvb(49,8+8*num_slots))
+        local subtree
+        if num_slots > 0 then
+            subtree = tree:add(gossip_lowest_slot_slots, tvb(49,8+8*num_slots))
+        end
         tvb = tvb(57)
         for i=1,num_slots,1 do
             subtree:add_le(gossip_lowest_slot_slot, tvb(0,8)):append_text(" #" .. i-1)
             tvb = tvb(8)
         end
-        -- TODO Stash and wall clock
+        -- Skipping 8 bytes of Vec<deprecated::EpochIncompleteSlots>, which is deprecated
+        tree:add_le(gossip_wallclock, tvb(8,8))
+        if tvb:len() > 16 then tvb = tvb(16) end
     elseif data_id == GOSSIP_CRDS_SNAPSHOT_HASHES or data_id == GOSSIP_CRDS_ACCOUNTS_HASHES then
         local event_name
         if data_id == GOSSIP_CRDS_SNAPSHOT_HASHES then
@@ -415,6 +440,20 @@ function solana_gossip_disect_crds_data (tvb, tree)
             tvb = tvb(40)
         end
         tree:add_le(gossip_wallclock, tvb(0,8))
+        if tvb:len() > 8 then tvb = tvb(8) end
+    elseif data_id == GOSSIP_CRDS_EPOCH_SLOTS then
+        tree:add(gossip_epoch_slots_index, tvb(0,1))
+        tree:add(gossip_pubkey,            tvb(1,32))
+
+        local num_entries = tvb(33,4):le_uint()
+        tvb = tvb(41)
+        for i=1,num_entries,1 do
+            tvb, entry = solana_gossip_disect_compressed_slots(tvb, tree)
+            entry:append_text(" #" .. i-1)
+        end
+
+        tree:add_le(gossip_wallclock, tvb(0,8))
+        if tvb:len() > 8 then tvb = tvb(8) end
     elseif data_id == GOSSIP_CRDS_LEGACY_VERSION or data_id == GOSSIP_CRDS_VERSION then
         tree:add(sol_pubkey, tvb(0,32))
         tree:add_le(gossip_wallclock,     tvb(32,8))
@@ -463,6 +502,50 @@ function solana_gossip_disect_socket_addr (entry, tvb, tree)
     subtree:add_le(gossip_port, port_tvb)
 
     return return_tvb, subtree
+end
+
+function solana_gossip_disect_compressed_slots (tvb, tree)
+    local before_len = tvb:len()
+    local entry = tree:add(gossip_epoch_slots_slots, tvb)
+
+    local compression_type = tvb(0,4):le_uint()
+    entry:add_le(gossip_epoch_slots_first_slot, tvb(4,8))
+    entry:add_le(gossip_epoch_slots_count,      tvb(12,8))
+    tvb = tvb(20)
+
+    if compression_type == 0 then
+        -- Flate2-compressed
+        local stream_len = tvb(0,4):le_uint()
+        entry:add(gossip_epoch_slots_flate2, tvb(8,stream_len))
+        tvb = tvb(8+stream_len)
+    elseif compression_type == 1 then
+        -- Uncompressed, BitVec with 1-byte blocks
+        tvb = solana_gossip_disect_uncompressed_slots(tvb, entry)
+    else
+        error("unsupported compression type: " .. compression_type)
+    end
+
+    entry:set_len(before_len - tvb:len())
+    return tvb, entry
+end
+
+function solana_gossip_disect_uncompressed_slots (tvb, tree)
+    local before_len = tvb:len()
+    local subtree = tree:add(gossip_epoch_slots_uncompressed, tvb)
+
+    local has_bits = tvb(0,1):uint() == 1
+    tvb = tvb(1)
+    if has_bits then
+        local count = tvb(0,4):le_uint()
+        local bits = subtree:add(gossip_epoch_slots_bitvec, tvb(8,count))
+        tvb = tvb(8+count)
+    end
+    subtree:add_le(gossip_epoch_slots_bitvec_size, tvb(0,8))
+    subtree:add_le(gossip_epoch_slots_bitvec_ones, tvb(8,8))
+    tvb = tvb(16)
+
+    subtree:set_len(before_len - tvb:len())
+    return tvb, subtree
 end
 
 -- Pops a transaction off tvb and appends a subtree to tree.

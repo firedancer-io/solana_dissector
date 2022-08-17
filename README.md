@@ -33,12 +33,12 @@ To activate, hit Cmd+Shift+L or restart Wireshark.
     - ✅ Contact Info
     - ✅ Vote
       - ❌ Vote program data
-    - ❌ Lowest Slot
+    - ✅ Lowest Slot
     - ✅ Snapshot Hashes
     - ✅ Accounts Hashes
-    - ❌ Epoch Slots
-    - ❌ Legacy Version
-    - ❌ Version
+    - ✅ Epoch Slots
+    - ✅ Legacy Version
+    - ✅ Version
     - ✅ Node Instance
     - ❌ Duplicate Shred
     - ❌ Incremental Snapshot Hashes
