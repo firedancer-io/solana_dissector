@@ -42,6 +42,10 @@ To activate, hit Cmd+Shift+L or restart Wireshark.
     - ✅ Node Instance
     - ❌ Duplicate Shred
     - ✅ Incremental Snapshot Hashes
-- ❌ TVU
-- ❌ Repair
+- 🚧 TVU
+  - 🚧 Legacy Coding Shreds
+  - ✅ Legacy Data Shreds
+  - ❌ Merkle Coding Shreds
+  - ❌ Merkle Data Shreds
+- ✅ Repair
 - ❌ TPU

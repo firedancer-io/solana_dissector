@@ -13,7 +13,9 @@ end
 -- Protocols                         --
 ---------------------------------------
 
-local gossip = Proto("Solana.Gossip", "Solana Gossip Protocol")
+local solana_proto = Proto("Solana.Core",   "Solana Core Protocol")
+local gossip       = Proto("Solana.Gossip", "Solana Gossip Protocol")
+local shreds_proto = Proto("Solana.Shreds", "Solana Shreds Protocol")
 
 ---------------------------------------
 -- Data Types                        --
@@ -133,6 +135,7 @@ local gossip_epoch_slots_bitvec_size  = ProtoField.uint64("solana.gossip.epoch_s
 local gossip_epoch_slots_bitvec_ones  = ProtoField.uint64("solana.gossip.epoch_slots.bitvec",       "Bit vector ones")
 local gossip_epoch_slots_flate2       = ProtoField.bytes ("solana.gossip.epoch_slots.flate2",       "Flate2 Data")
 
+local sol_slot              = ProtoField.uint64("solana.slot",                "Slot")
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
 local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
@@ -146,8 +149,27 @@ local sol_invoc_program_idx = ProtoField.uint8 ("solana.insn.program_index",  "P
 local sol_invoc_account_idx = ProtoField.uint8 ("solana.insn.account_index",  "Account Index", base.DEC)
 local sol_invoc_data        = ProtoField.bytes ("solana.insn.data",           "Data")
 
-gossip.fields = {
-    ------- Solana Core
+local shred_variant       = ProtoField.uint8 ("solana.shred.variant", "Shred Variant", base.HEX)
+local shred_coding        = ProtoField.none  ("solana.shred.coding",  "Coding Shred")
+local shred_data          = ProtoField.none  ("solana.shred.data",    "Data Shred")
+local shred_index         = ProtoField.uint32("solana.shred.index",   "Shred Index")
+local shred_version       = ProtoField.uint16("solana.shred.version", "Shred Version")
+local shred_fec_set_index = ProtoField.uint32("solana.shred.fec_set", "FEC Set Index")
+
+local shred_coding_num_data    = ProtoField.uint16("solana.shred.coding.num_data",   "Data Shred Count")
+local shred_coding_num_coding  = ProtoField.uint16("solana.shred.coding.num_coding", "Coding Shred Count")
+local shred_coding_position    = ProtoField.uint16("solana.shred.coding.position",   "Position")
+
+local shred_data_parent_offset = ProtoField.uint16("solana.shred.data.parent_offset", "Parent Offset")
+local shred_data_flags         = ProtoField.uint8 ("solana.shred.data.flags",         "Flags", base.HEX)
+local shred_data_tick_ref_mask = ProtoField.uint8 ("solana.shred.data.ref_tick",      "Reference Tick")
+local shred_data_complete      = ProtoField.bool  ("solana.shred.data.completed",     "Complete")
+local shred_data_last          = ProtoField.bool  ("solana.shred.data.last",          "Last Shred in Slot")
+local shred_data_size          = ProtoField.uint16("solana.shred.data.size",          "Size")
+local shred_data_content       = ProtoField.bytes ("solana.shred.data.contents",      "Content")
+
+solana_proto.fields = {
+    sol_slot,
     sol_transaction,
     sol_signature,
     sol_pubkey,
@@ -160,6 +182,9 @@ gossip.fields = {
     sol_invoc_program_idx,
     sol_invoc_account_idx,
     sol_invoc_data,
+}
+
+gossip.fields = {
     ------- Messages
     gossip_message_id,
     -- Pull request
@@ -239,13 +264,37 @@ gossip.fields = {
     gossip_node_instance_token,
 }
 
+shreds_proto.fields = {
+    ------- Common Header
+    shred_variant,
+    shred_coding,
+    shred_data,
+    shred_index,
+    shred_version,
+    shred_fec_set_index,
+    ------- Coding Header
+    shred_coding_num_data,
+    shred_coding_num_coding,
+    shred_coding_position,
+    ------- Data Header
+    shred_data_parent_offset,
+    shred_data_flags,
+    shred_data_tick_ref_mask,
+    shred_data_complete,
+    shred_data_last,
+    shred_data_size,
+    shred_data_content,
+}
+
 function gossip.dissector (tvb, pinfo, tree)
-    local subtree = tree:add(gossip, tvb(), "Solana Gossip Message")
+    local subtree = tree:add(gossip, tvb())
 
     local message_id = tvb(0,4):le_uint()
     local message_name = gossip_message_names[message_id] or "Unknown"
     subtree:add_le(gossip_message_id, tvb(0,4)):append_text(" (" .. message_name .. ")")
     tvb = tvb(4)
+
+    subtree:set_text("Solana Gossip " .. message_name)
 
     local disect
     if message_id == GOSSIP_MSG_PULL_REQ then
@@ -262,8 +311,33 @@ function gossip.dissector (tvb, pinfo, tree)
     end
 end
 
+function shreds_proto.dissector (tvb, pinfo, tree)
+    local subtree = tree:add(gossip, tvb(), "Solana Shred")
+
+    subtree:add(sol_signature, tvb(0,64))
+    local variant_node = subtree:add(shred_variant, tvb(64,1))
+    local variant = tvb(64,1):uint()
+    subtree:add_le(sol_slot, tvb(65,8))
+    subtree:add_le(shred_index, tvb(73,4))
+    subtree:add_le(shred_version, tvb(77,2))
+    subtree:add_le(shred_fec_set_index, tvb(79,4))
+
+    tvb = tvb(83)
+    if variant == 0xA5 then
+        variant_node:append_text(" (Data)")
+        solana_disect_data_shred(tvb, subtree)
+    elseif variant == 0x5A then
+        variant_node:append_text(" (Coding)")
+        solana_disect_coding_shred(tvb, subtree)
+    else
+        error("unsupported shred variant")
+    end
+end
+
 local udp_port = DissectorTable.get("udp.port")
 udp_port:add(8000, gossip)
+udp_port:add(8001, shreds_proto)
+udp_port:add(8002, shreds_proto)
 
 ---------------------------------------
 -- Helpers                           --
@@ -632,4 +706,31 @@ function solana_disect_invoc (tvb, tree)
 
     subtree:set_len(before_len - tvb:len())
     return tvb, subtree
+end
+
+function solana_disect_coding_shred (tvb, tree)
+    local subtree = tree:add(shred_coding, tvb)
+    subtree:add_le(shred_coding_num_data,   tvb(0,2))
+    subtree:add_le(shred_coding_num_coding, tvb(2,2))
+    subtree:add_le(shred_coding_position,   tvb(4,2))
+end
+
+function solana_disect_data_shred (tvb, tree)
+    local subtree = tree:add(shred_data, tvb)
+    subtree:add_le(shred_data_parent_offset, tvb(0,2))
+    local flags_node = subtree:add(shred_data_flags, tvb(2,1))
+    subtree:add_le(shred_data_size,          tvb(3,2))
+    local content_size = tvb(3,2):le_uint() - 88
+    subtree:add_le(shred_data_content,       tvb(5,content_size))
+
+    local flags = tvb(2,1):uint()
+    flags_node
+        :add(shred_data_tick_ref_mask, tvb(2,1), bit.band(flags, 0x3F))
+        :set_generated()
+    flags_node
+        :add(shred_data_complete, tvb(2,1), bit.band(flags, 0x40) ~= 0)
+        :set_generated()
+    flags_node
+        :add(shred_data_last, tvb(2,1), bit.band(flags, 0xC0) ~= 0)
+        :set_generated()
 end
