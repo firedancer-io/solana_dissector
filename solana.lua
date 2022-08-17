@@ -9,50 +9,9 @@ if set_plugin_info then
     set_plugin_info(my_info)
 end
 
-local byte, char, concat = string.byte, string.char, table.concat
-
--- https://github.com/philanc/plc/blob/master/plc/base58.lua
--- Copyright (c) 2015  Phil Leblanc  -- see copyright/plc.NOTICE file
-local b58chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-local b58charmap = {};
-for i = 1, 58 do b58charmap[byte(b58chars, i)] = i - 1  end
-local function base58_encode(s)
-	local q, b
-	local et = {}
-	local zn = 0
-	local nt = {}
-	local dt = {}
-	local more = true
-	for i = 1, #s do
-		b = byte(s, i)
-		if more and b == 0 then
-			zn = zn + 1
-		else
-			more = false
-		end
-		nt[i] = b
-	end
-	if #s == zn then
-		return string.rep('1', zn)
-	end
-	more = true
-	while more do
-		local r = 0
-		more = false
-		for i = 1, #nt do
-			b = nt[i] + (256 * r)
-			q = math.floor(b / 58)
-			more = more or q > 0
-			r = b % 58
-			dt[i] = q
-		end
-		table.insert(et, 1, char(byte(b58chars, r+1)))
-		nt = {}
-		for i = 1, #dt do nt[i] = dt[i] end
-		dt = {}
-	end
-	return string.rep('1', zn) .. concat(et)
-end
+---------------------------------------
+-- Data Types                        --
+---------------------------------------
 
 local gossip = Proto("Solana.Gossip", "Solana Gossip Protocol")
 
@@ -259,10 +218,79 @@ local udp_port = DissectorTable.get("udp.port")
 udp_port:add(8000, gossip)
 
 ---------------------------------------
+-- Helpers                           --
+---------------------------------------
+
+-- Base58 decoder
+-- https://github.com/philanc/plc/blob/master/plc/base58.lua
+-- Copyright (c) 2015  Phil Leblanc  -- see copyright/plc.NOTICE file
+local b58chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+local b58charmap = {};
+for i = 1, 58 do b58charmap[string.byte(b58chars, i)] = i - 1  end
+local function base58_encode(s)
+    local byte, char, concat = string.byte, string.char, table.concat
+	local q, b
+	local et = {}
+	local zn = 0
+	local nt = {}
+	local dt = {}
+	local more = true
+	for i = 1, #s do
+		b = byte(s, i)
+		if more and b == 0 then
+			zn = zn + 1
+		else
+			more = false
+		end
+		nt[i] = b
+	end
+	if #s == zn then
+		return string.rep('1', zn)
+	end
+	more = true
+	while more do
+		local r = 0
+		more = false
+		for i = 1, #nt do
+			b = nt[i] + (256 * r)
+			q = math.floor(b / 58)
+			more = more or q > 0
+			r = b % 58
+			dt[i] = q
+		end
+		table.insert(et, 1, char(byte(b58chars, r+1)))
+		nt = {}
+		for i = 1, #dt do nt[i] = dt[i] end
+		dt = {}
+	end
+	return string.rep('1', zn) .. concat(et)
+end
+
+-- Splits a Tvb into TvbRange.
+-- Takes indexes as variadic args.
+-- Finish args with -1 to return remaining TvbRange.
+local function tvbs (tvb, ...)
+    ret = {}
+    local split = nil
+    for i,v in ipairs({...}) do
+        if split ~= nil then
+            local size = v - split
+            if v == -1 then
+                size = nil
+            end
+            table.insert(ret, tvb(split, size))
+        end
+        split = v
+    end
+    return unpack(ret)
+end
+
+---------------------------------------
 -- Data types                        --
 ---------------------------------------
 
-function disect_crds_data (tvb, tree)
+-- Pops a gossip CrdsData off tvb and appends items to tree.
+local function disect_crds_data (tvb, tree)
     local data_id = tvb(0,4):le_uint()
     local data_name = gossip_crds_names[data_id] or "Unknown"
     tree:add_le(gossip_crds_id, tvb(0,4)):append_text(" (" .. data_name .. ")")
@@ -346,23 +374,8 @@ function disect_crds_data (tvb, tree)
     return tvb
 end
 
-function tvbs (tvb, ...)
-    ret = {}
-    local split = nil
-    for i,v in ipairs({...}) do
-        if split ~= nil then
-            local size = v - split
-            if v == -1 then
-                size = nil
-            end
-            table.insert(ret, tvb(split, size))
-        end
-        split = v
-    end
-    return unpack(ret)
-end
-
-function disect_socket_addr (entry, tvb, tree)
+-- Pops a gossip SocketAddr off tvb and appends a subtree to tree.
+local function disect_socket_addr (entry, tvb, tree)
     local ip_type = tvb(0,4):le_uint()
     local return_tvb, ip_entry, ip_tvb, port_tvb
     if ip_type == 0 then
@@ -384,7 +397,8 @@ function disect_socket_addr (entry, tvb, tree)
     return return_tvb, subtree
 end
 
-function disect_transaction (tvb, tree, name)
+-- Pops a transaction off tvb and appends a subtree to tree.
+local function disect_transaction (tvb, tree, name)
     local before_len = tvb:len()
     local subtree = tree:add(sol_transaction, tvb)
 
@@ -423,7 +437,8 @@ function disect_transaction (tvb, tree, name)
     return tvb, subtree
 end
 
-function disect_invoc (tvb, tree)
+-- Pops a transaction instruction off tvb and appends a subtree to tree.
+local function disect_invoc (tvb, tree)
     local before_len = tvb:len()
     local subtree = tree:add(sol_invoc, tvb)
 
@@ -446,13 +461,15 @@ function disect_invoc (tvb, tree)
     return tvb, subtree
 end
 
-function disect_pubkey (tvb, tree, entry)
+-- Pops a pubkey or hash off tvb and appends it to tree.
+local function disect_pubkey (tvb, tree, entry)
     tvb = tvb(0,32)
     return tree:add(entry or sol_pubkey, tvb):
         append_text(": " .. base58_encode(tvb:bytes():raw()))
 end
 
-function disect_signature (tvb, tree, entry)
+-- Pops a signature off tvb and appends it to tree.
+local function disect_signature (tvb, tree, entry)
     tvb = tvb(0,64)
     return tree:add(entry or sol_signature, tvb):
         append_text(": " .. base58_encode(tvb:bytes():raw()))
