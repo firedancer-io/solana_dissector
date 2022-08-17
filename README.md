@@ -19,7 +19,7 @@ To activate, hit Cmd+Shift+L or restart Wireshark.
 
 - 🚧 Gossip protocol
   - Messages
-    - ❌ Pull Request
+    - ✅ Pull Request
     - ✅ Pull Response
     - ✅ Push Message
     - ✅ Prune Message

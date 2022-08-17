@@ -114,6 +114,15 @@ local gossip_prune_pubkey      = ProtoField.bytes("solana.gossip.prune.pubkey", 
 local gossip_prune_target      = ProtoField.bytes("solana.gossip.prune.target", "Target")
 local gossip_prune_destination = ProtoField.bytes("solana.gossip.prune.dest",   "Destination")
 
+local gossip_filter_mask      = ProtoField.uint64("solana.gossip.filter.mask",      "Mask",  base.HEX)
+local gossip_filter_mask_bits = ProtoField.uint32("solana.gossip.filter.mask_bits", "Mask bits")
+
+local gossip_bloom_filter = ProtoField.none  ("solana.gossip.bloom",       "Bloom filter")
+local gossip_bloom_key    = ProtoField.uint64("solana.gossip.bloom.key",   "Key", base.HEX)
+local gossip_bloom_bits   = ProtoField.bytes ("solana.gossip.bloom.bits",  "Bit vector")
+local gossip_bloom_size   = ProtoField.uint64("solana.gossip.bloom.size",  "Size in bits")
+local gossip_bloom_ones   = ProtoField.uint64("solana.gossip.bloom.ones",  "Number of one bits")
+
 local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
 local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
@@ -143,6 +152,7 @@ gossip.fields = {
     sol_invoc_data,
     ------- Messages
     gossip_message_id,
+    -- Pull request
     -- Pull response
     gossip_pull_resp_pubkey,
     -- Prune
@@ -160,6 +170,15 @@ gossip.fields = {
     gossip_port,
     gossip_wallclock,
     gossip_pubkey,
+    -- Bloom
+    gossip_bloom_filter,
+    gossip_bloom_key,
+    gossip_bloom_bits,
+    gossip_bloom_size,
+    gossip_bloom_ones,
+    -- CRDS Filter
+    gossip_filter_mask,
+    gossip_filter_mask_bits,
     -- CRDS
     gossip_crds_value,
     gossip_crds_value_signature,
@@ -260,7 +279,9 @@ function solana_gossip_disect_ping (tvb, subtree)
 end
 
 function solana_gossip_disect_pull_req (tvb, subtree)
-    -- TODO
+    tvb = solana_gossip_disect_crds_filter(tvb, subtree)
+    tvb = solana_gossip_disect_crds_value (tvb, subtree)
+    return tvb
 end
 
 function solana_gossip_disect_pull_resp (tvb, subtree)
@@ -268,9 +289,9 @@ function solana_gossip_disect_pull_resp (tvb, subtree)
     local num_values = tvb(32,4):le_uint() -- 8 bytes broken
     tvb = tvb(40)
     for i=1,num_values,1 do
-        local value = subtree:add(gossip_crds_value, tvb(0,64)):append_text(" #" .. i-1)
-        value:add(gossip_crds_value_signature, tvb(0,64))
-        tvb = solana_gossip_disect_crds_data(tvb(64), value)
+        local value
+        tvb, value = solana_gossip_disect_crds_value(tvb, subtree)
+        value:append_text(" #" .. i-1)
     end
 end
 
@@ -286,6 +307,52 @@ function solana_gossip_disect_prune (tvb, subtree)
     subtree:add(sol_signature, tvb(0,64))
     subtree:add(gossip_prune_destination, tvb(64,32))
     subtree:add_le(gossip_wallclock, tvb(96,8))
+end
+
+-- Pops a gossip CrdsFilter off tvb and appends items to tree.
+function solana_gossip_disect_crds_filter (tvb, tree)
+    tvb = solana_gossip_disect_bloom_filter(tvb, tree)
+    tree:add_le(gossip_filter_mask,      tvb(0,8))
+    tree:add_le(gossip_filter_mask_bits, tvb(8,4))
+    return tvb(12)
+end
+
+-- Pops a gossip Bloom filter off tvb and appends it as an opaque object to tree.
+function solana_gossip_disect_bloom_filter (tvb, tree)
+    local before_len = tvb:len()
+    local bloom = tree:add(gossip_bloom_filter, tvb)
+
+    local num_keys = tvb(0,4):le_uint()
+    tvb = tvb(8)
+    for i=1,num_keys,1 do
+        bloom:add(gossip_bloom_key, tvb(0,8))
+        tvb = tvb(8)
+    end
+
+    local has_bits = tvb(0,1):uint() == 1
+    tvb = tvb(1)
+    if has_bits then
+        local count = tvb(0,4):le_uint()
+        local bits = bloom:add(gossip_bloom_bits, tvb(8,count*8))
+        tvb = tvb(8+count*8)
+    end
+
+    bloom:add_le(gossip_bloom_size, tvb(0,8))
+    bloom:add_le(gossip_bloom_ones, tvb(8,8))
+    tvb = tvb(16)
+
+    bloom:set_len(before_len - tvb:len())
+    return tvb
+end
+
+-- Pops a gossip CrdsValue off tvb and appends items to tree.
+function solana_gossip_disect_crds_value (tvb, tree, i)
+    local before_len = tvb:len()
+    local value = tree:add(gossip_crds_value, tvb)
+    value:add(gossip_crds_value_signature, tvb(0,64))
+    tvb = solana_gossip_disect_crds_data(tvb(64), value)
+    value:set_len(before_len - tvb:len())
+    return tvb, value
 end
 
 -- Pops a gossip CrdsData off tvb and appends items to tree.
@@ -368,6 +435,8 @@ function solana_gossip_disect_crds_data (tvb, tree)
         tree:add_le(gossip_wallclock, tvb(32,8))
         tree:add_le(gossip_node_instance_timestamp, tvb(40,8))
         tree:add_le(gossip_node_instance_token,     tvb(48,8))
+    else
+        error("unsupported data ID")
     end
 
     return tvb
