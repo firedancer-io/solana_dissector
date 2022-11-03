@@ -134,7 +134,6 @@ local gossip_epoch_slots_count        = ProtoField.uint64("solana.gossip.epoch_s
 local gossip_epoch_slots_uncompressed = ProtoField.bytes ("solana.gossip.epoch_slots.uncompressed", "Uncompressed Data")
 local gossip_epoch_slots_bitvec       = ProtoField.bytes ("solana.gossip.epoch_slots.bitvec",       "Bit vector")
 local gossip_epoch_slots_bitvec_size  = ProtoField.uint64("solana.gossip.epoch_slots.bitvec",       "Bit vector size")
-local gossip_epoch_slots_bitvec_ones  = ProtoField.uint64("solana.gossip.epoch_slots.bitvec",       "Bit vector ones")
 local gossip_epoch_slots_flate2       = ProtoField.bytes ("solana.gossip.epoch_slots.flate2",       "Flate2 Data")
 
 local sol_slot              = ProtoField.uint64("solana.slot",                "Slot")
@@ -288,7 +287,6 @@ gossip.fields = {
     gossip_epoch_slots_uncompressed,
     gossip_epoch_slots_bitvec,
     gossip_epoch_slots_bitvec_size,
-    gossip_epoch_slots_bitvec_ones,
     gossip_epoch_slots_flate2,
     -- CRDS Version
     gossip_version_major,
@@ -633,7 +631,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
     elseif data_id == GOSSIP_CRDS_INC_SNAPSHOT_HASHES then
         tree:add   (gossip_pubkey,    tvb(0,32))
         local event
-        tvb, event = solana_gossip_disect_hash_event(tvb, tree)
+        tvb, event = solana_gossip_disect_hash_event(tvb(32), tree)
         event:set_text("Base Snapshot")
 
         local num_hashes = tvb(0,4):le_uint()
@@ -647,7 +645,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
         tree:add_le(gossip_wallclock, tvb(0,8))
         if tvb:len() > 8 then tvb = tvb(8) end
     else
-        error("unsupported data ID")
+        error("unsupported data ID: " .. data_id)
     end
 
     return tvb
@@ -731,8 +729,7 @@ function solana_gossip_disect_uncompressed_slots (tvb, tree)
         tvb = tvb(8+count)
     end
     subtree:add_le(gossip_epoch_slots_bitvec_size, tvb(0,8))
-    subtree:add_le(gossip_epoch_slots_bitvec_ones, tvb(8,8))
-    tvb = tvb(16)
+    tvb = tvb(8)
 
     subtree:set_len(before_len - tvb:len())
     return tvb, subtree
