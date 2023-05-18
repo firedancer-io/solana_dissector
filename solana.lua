@@ -160,6 +160,7 @@ local shred_fec_set_index = ProtoField.uint32("solana.shred.fec_set", "FEC Set I
 local shred_coding_num_data    = ProtoField.uint16("solana.shred.coding.num_data",   "Data Shred Count")
 local shred_coding_num_coding  = ProtoField.uint16("solana.shred.coding.num_coding", "Coding Shred Count")
 local shred_coding_position    = ProtoField.uint16("solana.shred.coding.position",   "Position")
+local shred_parity_content     = ProtoField.bytes ("solana.shred.coding.contents",    "Content")
 
 local shred_data_parent_offset = ProtoField.uint16("solana.shred.data.parent_offset", "Parent Offset")
 local shred_data_flags         = ProtoField.uint8 ("solana.shred.data.flags",         "Flags", base.HEX)
@@ -168,6 +169,10 @@ local shred_data_complete      = ProtoField.bool  ("solana.shred.data.completed"
 local shred_data_last          = ProtoField.bool  ("solana.shred.data.last",          "Last Shred in Slot")
 local shred_data_size          = ProtoField.uint16("solana.shred.data.size",          "Size")
 local shred_data_content       = ProtoField.bytes ("solana.shred.data.contents",      "Content")
+
+local merkle_proof       = ProtoField.none ("solana.shred.merkle",           "Merkle Proof")
+local merkle_proof_root  = ProtoField.none ("solana.shred.merkle.root",      "Merkle Proof Root")
+local merkle_proof_node  = ProtoField.none ("solana.shred.merkle.node",      "Merkle Proof Node")
 
 local REPAIR_LEGACY_WINDOW_INDEX                    = 0
 local REPAIR_LEGACY_HIGHEST_WINDOW_INDEX            = 1
@@ -311,6 +316,7 @@ shreds_proto.fields = {
     shred_coding_num_data,
     shred_coding_num_coding,
     shred_coding_position,
+    shred_parity_content,
     ------- Data Header
     shred_data_parent_offset,
     shred_data_flags,
@@ -319,6 +325,10 @@ shreds_proto.fields = {
     shred_data_last,
     shred_data_size,
     shred_data_content,
+    ------- Merkle Tree
+    merkle_proof,
+    merkle_proof_root,
+    merkle_proof_node,
 }
 
 repair_proto.fields = {
@@ -369,10 +379,16 @@ function shreds_proto.dissector (tvb, pinfo, tree)
     tvb = tvb(83)
     if variant == 0xA5 then
         variant_node:append_text(" (Data)")
-        solana_disect_data_shred(tvb, subtree)
+        solana_disect_data_shred(tvb, subtree, 0)
     elseif variant == 0x5A then
         variant_node:append_text(" (Coding)")
-        solana_disect_coding_shred(tvb, subtree)
+        solana_disect_coding_shred(tvb, subtree, 0)
+    elseif (0x40 <= variant) and (variant <= 0x4F) then
+        variant_node:append_text(" (Coding, Merkle)")
+        solana_disect_coding_shred(tvb, subtree, variant-0x40)
+    elseif (0x80 <= variant) and (variant <= 0x8F) then
+        variant_node:append_text(" (Data, Merkle)")
+        solana_disect_data_shred(tvb, subtree, variant-0x80)
     else
         error("unsupported shred variant")
     end
@@ -806,14 +822,24 @@ function solana_disect_invoc (tvb, tree)
     return tvb, subtree
 end
 
-function solana_disect_coding_shred (tvb, tree)
+function solana_disect_coding_shred (tvb, tree, merkle_height)
     local subtree = tree:add(shred_coding, tvb)
     subtree:add_le(shred_coding_num_data,   tvb(0,2))
     subtree:add_le(shred_coding_num_coding, tvb(2,2))
     subtree:add_le(shred_coding_position,   tvb(4,2))
+    tvb = tvb(6)
+    local content_size = 1228 - 83 - 6
+    if merkle_height == 0 then
+        subtree:add_le(shred_parity_content,       tvb(0,content_size))
+    else
+        content_size = content_size - 20*(merkle_height+1)
+        subtree:add_le(shred_parity_content,       tvb(0,content_size))
+        tvb = tvb(content_size)
+        solana_disect_merkle_proof(tvb, subtree, merkle_height)
+    end
 end
 
-function solana_disect_data_shred (tvb, tree)
+function solana_disect_data_shred (tvb, tree, merkle_height)
     local subtree = tree:add(shred_data, tvb)
     subtree:add_le(shred_data_parent_offset, tvb(0,2))
     local flags_node = subtree:add(shred_data_flags, tvb(2,1))
@@ -829,8 +855,21 @@ function solana_disect_data_shred (tvb, tree)
         :add(shred_data_complete, tvb(2,1), bit.band(flags, 0x40) ~= 0)
         :set_generated()
     flags_node
-        :add(shred_data_last, tvb(2,1), bit.band(flags, 0xC0) ~= 0)
+        :add(shred_data_last, tvb(2,1), bit.band(flags, 0x80) ~= 0)
         :set_generated()
+
+    if merkle_height > 0 then
+        solana_disect_merkle_proof(tvb(1100-20*merkle_height), subtree, merkle_height)
+    end
+end
+
+function solana_disect_merkle_proof(tvb, tree, merkle_height)
+    local proof_tree = tree:add(merkle_proof, tvb(0, 20*(merkle_height+1)))
+    proof_tree:add_le(merkle_proof_root, tvb(0, 20))
+    for i=1,merkle_height,1 do
+        tvb = tvb(20)
+        proof_tree:add(merkle_proof_node, tvb(0,20)):append_text(" #" .. i-1)
+    end
 end
 
 function solana_repair_disect_header (tvb, tree)
