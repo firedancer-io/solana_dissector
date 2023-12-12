@@ -58,6 +58,7 @@ local GOSSIP_CRDS_VERSION             = 7
 local GOSSIP_CRDS_NODE_INSTANCE       = 8
 local GOSSIP_CRDS_DUPLICATE_SHRED     = 9
 local GOSSIP_CRDS_INC_SNAPSHOT_HASHES = 10
+local GOSSIP_CRDS_CONTACT_INFO_V2     = 11
 
 local gossip_crds_id = ProtoField.uint32("solana.gossip.crds.id", "Data ID", base.DEC)
 local gossip_crds_names = {
@@ -72,10 +73,11 @@ local gossip_crds_names = {
     [GOSSIP_CRDS_NODE_INSTANCE]       = "NodeInstance",
     [GOSSIP_CRDS_DUPLICATE_SHRED]     = "DuplicateShred",
     [GOSSIP_CRDS_INC_SNAPSHOT_HASHES] = "IncrementalSnapshotHashes",
+    [GOSSIP_CRDS_CONTACT_INFO_V2]     = "ContactInfo (v2)",
 }
 
-local gossip_ip4            = ProtoField.ipv4  ("solana.gossip.ip4",         "IP")
-local gossip_ip6            = ProtoField.ipv6  ("solana.gossip.ip6",         "IP")
+local gossip_ip4            = ProtoField.ipv4  ("solana.gossip.ip4",         "IPv4 Address")
+local gossip_ip6            = ProtoField.ipv6  ("solana.gossip.ip6",         "IPv6 Address")
 local gossip_port           = ProtoField.uint16("solana.gossip.port",        "Port") -- TODO fix per-protocol port
 local gossip_wallclock      = ProtoField.uint64("solana.gossip.wallclock",   "Wall clock")
 local gossip_pubkey         = ProtoField.bytes ("solana.gossip.from",        "From")
@@ -90,6 +92,44 @@ local gossip_contact_info_tpu_vote     = ProtoField.none("solana.gossip.contact_
 local gossip_contact_info_rpc          = ProtoField.none("solana.gossip.contact_info.rpc", "RPC Endpoint")
 local gossip_contact_info_rpc_pubsub   = ProtoField.none("solana.gossip.contact_info.rpc_pubsub", "RPC PubSub Endpoint")
 local gossip_contact_info_serve_repair = ProtoField.none("solana.gossip.contact_info.serve_repair", "Serve Repair Endpoint")
+local gossip_contact_info_outset       = ProtoField.uint64("solana.gossip.contact_info.outset", "Outset")
+
+local gossip_addrs              = ProtoField.none  ("solana.gossip.addrs",              "Addresses")
+local gossip_socket_entries     = ProtoField.none  ("solana.gossip.socket_entries",     "Socket Entries")
+local gossip_socket_entry       = ProtoField.none  ("solana.gossip.socket_entry",       "Socket Entry")
+local gossip_socket_entry_key   = ProtoField.uint8 ("solana.gossip.socket_entry.key",   "Protocol")
+local gossip_socket_entry_index = ProtoField.uint8 ("solana.gossip.socket_entry.index", "Address Index")
+local gossip_socket_entry_port  = ProtoField.uint16("solana.gossip.socket_entry.port",  "Port")
+
+local GOSSIP_SOCKET_GOSSIP            =  0
+local GOSSIP_SOCKET_RPC               =  2
+local GOSSIP_SOCKET_RPC_PUBSUB        =  3
+local GOSSIP_SOCKET_SERVE_REPAIR      =  4
+local GOSSIP_SOCKET_SERVE_REPAIR_QUIC =  1
+local GOSSIP_SOCKET_TPU               =  5
+local GOSSIP_SOCKET_TPU_FORWARDS      =  6
+local GOSSIP_SOCKET_TPU_FORWARDS_QUIC =  7
+local GOSSIP_SOCKET_TPU_QUIC          =  8
+local GOSSIP_SOCKET_TPU_VOTE          =  9
+local GOSSIP_SOCKET_TVU               = 10
+local GOSSIP_SOCKET_TVU_QUIC          = 11
+
+local gossip_socket_names = {
+    [GOSSIP_SOCKET_GOSSIP]            = "Gossip",
+    [GOSSIP_SOCKET_RPC]               = "RPC",
+    [GOSSIP_SOCKET_RPC_PUBSUB]        = "RPC PubSub",
+    [GOSSIP_SOCKET_SERVE_REPAIR]      = "Serve Repair",
+    [GOSSIP_SOCKET_SERVE_REPAIR_QUIC] = "Serve Repair QUIC",
+    [GOSSIP_SOCKET_TPU]               = "TPU",
+    [GOSSIP_SOCKET_TPU_FORWARDS]      = "TPU Forwards",
+    [GOSSIP_SOCKET_TPU_FORWARDS_QUIC] = "TPU Forwards QUIC",
+    [GOSSIP_SOCKET_TPU_QUIC]          = "TPU QUIC",
+    [GOSSIP_SOCKET_TPU_VOTE]          = "TPU Vote",
+    [GOSSIP_SOCKET_TVU]               = "TVU",
+    [GOSSIP_SOCKET_TVU_QUIC]          = "TVU QUIC",
+}
+
+local gossip_extensions = ProtoField.none("solana.gossip.extensions", "Extensions")
 
 local gossip_vote_index     = ProtoField.uint8 ("solana.gossip.vote.index",  "Index")
 local gossip_vote_pubkey    = ProtoField.bytes ("solana.gossip.vote.pubkey", "Pubkey")
@@ -110,6 +150,7 @@ local gossip_version_minor    = ProtoField.uint16("solana.gossip.version.minor",
 local gossip_version_patch    = ProtoField.uint16("solana.gossip.version.patch",    "Patch",       base.DEC)
 local gossip_version_commit   = ProtoField.uint32("solana.gossip.version.commit",   "Commit Hash", base.HEX)
 local gossip_version_features = ProtoField.uint32("solana.gossip.version.features", "Feature Set", base.HEX)
+local gossip_version_client   = ProtoField.uint16("solana.gossip.version.client",   "Client ID",   base.HEX)
 
 local gossip_node_instance_timestamp = ProtoField.uint64("solana.gossip.node_instance.timestamp", "Instance Creation Timestamp", base.DEC)
 local gossip_node_instance_token     = ProtoField.uint64("solana.gossip.node_instance.token",     "Instance Token",              base.HEX)
@@ -160,7 +201,7 @@ local shred_fec_set_index = ProtoField.uint32("solana.shred.fec_set", "FEC Set I
 local shred_coding_num_data    = ProtoField.uint16("solana.shred.coding.num_data",   "Data Shred Count")
 local shred_coding_num_coding  = ProtoField.uint16("solana.shred.coding.num_coding", "Coding Shred Count")
 local shred_coding_position    = ProtoField.uint16("solana.shred.coding.position",   "Position")
-local shred_parity_content     = ProtoField.bytes ("solana.shred.coding.contents",    "Content")
+local shred_parity_content     = ProtoField.bytes ("solana.shred.coding.contents",   "Content")
 
 local shred_data_parent_offset = ProtoField.uint16("solana.shred.data.parent_offset", "Parent Offset")
 local shred_data_flags         = ProtoField.uint8 ("solana.shred.data.flags",         "Flags", base.HEX)
@@ -270,6 +311,14 @@ gossip.fields = {
     gossip_contact_info_rpc,
     gossip_contact_info_rpc_pubsub,
     gossip_contact_info_serve_repair,
+    gossip_contact_info_outset,
+    gossip_addrs,
+    gossip_socket_entries,
+    gossip_socket_entry,
+    gossip_socket_entry_key,
+    gossip_socket_entry_index,
+    gossip_socket_entry_port,
+    gossip_extensions,
     -- CRDS Vote
     gossip_vote_index,
     gossip_vote_pubkey,
@@ -299,6 +348,7 @@ gossip.fields = {
     gossip_version_patch,
     gossip_version_commit,
     gossip_version_features,
+    gossip_version_client,
     -- CRDS NodeInstance
     gossip_node_instance_timestamp,
     gossip_node_instance_token,
@@ -476,6 +526,57 @@ end
 -- Data types                        --
 ---------------------------------------
 
+function decode_leb16 (tvb)
+    local val = bit32.band(tvb(0,1):uint(), 0x7f)
+    local sz
+    if tvb(0,1):uint() < 0x80 then
+        sz = 1
+    elseif tvb(1,1):uint() < 0x80 then
+        val = bit32.bor(val, bit32.lshift(bit32.band(tvb(1,1):uint(), 0x7f), 7))
+        sz = 2
+    else
+        sz = 3
+        val = bit32.bor(val, bit32.lshift(bit32.band(tvb(2,1):uint(), 0x7f), 14))
+    end
+    local rem
+    if tvb:len() > sz then
+        rem = tvb(sz)
+    else
+        rem = nil
+    end
+    return val, tvb(0,sz), rem
+end
+
+function decode_leb64 (tvb)
+    local val = UInt64.new()
+    local shift = 0
+    local sz = 1
+    for i=1,9,1 do
+        local part = tvb(i-1,1):uint64()
+        val = val:bor(part:band(0x7f):lshift(shift))
+        if part:band(0x80) == UInt64.min() then
+            break
+        end
+        shift = shift + 7
+        sz = sz + 1
+    end
+    return val, tvb(0, sz), tvb(sz)
+end
+
+function dissect_leb16 (tree, tvb, protofield)
+    local val, field_range
+    val, field_range, tvb = decode_leb16(tvb)
+    tree:add(protofield, field_range, val)
+    return tvb
+end
+
+function dissect_leb64 (tree, tvb, protofield)
+    local val, field_range
+    val, field_range, tvb = decode_leb64(tvb)
+    tree:add(protofield, field_range, val)
+    return tvb
+end
+
 function solana_gossip_disect_ping (tvb, subtree)
     subtree:add(gossip_ping_from, tvb(0,32))
     subtree:add(gossip_ping_token, tvb(32,32))
@@ -555,7 +656,9 @@ function solana_gossip_disect_crds_value (tvb, tree, i)
     local value = tree:add(gossip_crds_value, tvb)
     value:add(gossip_crds_value_signature, tvb(0,64))
     tvb = solana_gossip_disect_crds_data(tvb(64), value)
-    value:set_len(before_len - tvb:len())
+    if tvb then
+        value:set_len(before_len - tvb:len())
+    end
     return tvb, value
 end
 
@@ -660,6 +763,15 @@ function solana_gossip_disect_crds_data (tvb, tree)
 
         tree:add_le(gossip_wallclock, tvb(0,8))
         if tvb:len() > 8 then tvb = tvb(8) end
+    elseif data_id == GOSSIP_CRDS_DUPLICATE_SHRED then
+        tree:add_le(shred_version,    tvb(0,2))
+        tree:add   (gossip_pubkey,    tvb(2,32))
+        tree:add_le(gossip_wallclock, tvb(34,8))
+        tree:add_le(sol_slot,         tvb(42,8))
+        tree:add_le(shred_index,      tvb(50,4))
+        tree:add_le(shred_variant,    tvb(54,1))
+    elseif data_id == GOSSIP_CRDS_CONTACT_INFO_V2 then
+        tvb = solana_gossip_disect_contact_info_v2(tvb, tree)
     else
         error("unsupported data ID: " .. data_id)
     end
@@ -685,27 +797,83 @@ function solana_gossip_disect_contact_info (tvb, tree)
     return tvb
 end
 
--- Pops a gossip SocketAddr off tvb and appends a subtree to tree.
-function solana_gossip_disect_socket_addr (entry, tvb, tree)
+function solana_gossip_disect_contact_info_v2 (tvb, tree)
+    tree:add(gossip_pubkey, tvb(0,32))
+    tvb = dissect_leb64(tree, tvb(32), gossip_wallclock)
+    tree:add_le(gossip_contact_info_outset, tvb(0,8))
+    tree:add_le(shred_version, tvb(8,2))
+    tvb = dissect_leb16(tree, tvb(10), gossip_version_major)
+    tvb = dissect_leb16(tree, tvb, gossip_version_minor)
+    tvb = dissect_leb16(tree, tvb, gossip_version_patch)
+    tree:add_le(gossip_version_commit, tvb(0,4))
+    tree:add_le(gossip_version_features, tvb(4,4))
+    tvb = dissect_leb16(tree, tvb(8), gossip_version_client)
+
+    local addr_tree = tree:add(gossip_addrs)
+    local addr_cnt, addr_cnt_range
+    addr_cnt, addr_cnt_range, tvb = decode_leb16 (tvb)
+    for i=1,addr_cnt,1 do
+        local node
+        tvb, node = solana_gossip_disect_ip_addr(tvb, addr_tree, i)
+        node:append_text(" (#" .. i-1 .. ")")
+    end
+
+    local socket_tree = tree:add(gossip_socket_entries)
+    local socket_cnt, socket_cnt_range
+    socket_cnt, socket_cnt_range, tvb = decode_leb16 (tvb)
+    local subtree
+    local port_off = 0
+    for i=1,socket_cnt,1 do
+        tvb, subtree, port_off = solana_gossip_disect_socket_entry(gossip_socket_entry, tvb, socket_tree, port_off)
+        subtree:append_text(" #" .. i-1)
+    end
+
+    local ext_cnt, ext_cnt_range
+    ext_cnt, ext_cnt_range, tvb = decode_leb16 (tvb)
+    tree:add(gossip_extensions, ext_cnt_range)
+    return tvb
+end
+
+function solana_gossip_disect_ip_addr (tvb, tree, i)
     local ip_type = tvb(0,4):le_uint()
-    local return_tvb, ip_entry, ip_tvb, port_tvb
+    local ip_entry, ip_tvb
     if ip_type == 0 then
-        tvb, return_tvb = tvbs(tvb,0,10,-1)
-        ip_tvb, port_tvb = tvbs(tvb,4,8,10)
+        ip_tvb, tvb = tvbs(tvb,4,8,-1)
         ip_entry = gossip_ip4
     elseif ip_type == 1 then
-        tvb, return_tvb = tvbs(tvb,0,22,-1)
-        ip_tvb, port_tvb = tvbs(tvb,4,20,22)
+        ip_tvb, tvb = tvbs(tvb,4,20,-1)
         ip_entry = gossip_ip6
     else
         error("invalid ip type: " .. ip_type)
     end
+    local node = tree:add(ip_entry, ip_tvb)
+    return tvb, node
+end
 
+-- Pops a gossip SocketAddr off tvb and appends a subtree to tree.
+function solana_gossip_disect_socket_addr (entry, tvb, tree)
     local subtree = tree:add(entry, tvb)
-    subtree:add(ip_entry, ip_tvb)
-    subtree:add_le(gossip_port, port_tvb)
+    tvb = solana_gossip_disect_ip_addr(tvb, subtree)
+    subtree:add_le(gossip_port, tvb(0,2))
+    return tvb(2), subtree
+end
 
-    return return_tvb, subtree
+function solana_gossip_disect_socket_entry (entry, tvb, tree, prev_port)
+    local before_len = tvb:len()
+    local subtree = tree:add(entry, tvb)
+
+    local key_name = gossip_socket_names[tvb(0,1):le_uint()] or "Unknown"
+    subtree:add_le(gossip_socket_entry_key, tvb(0,1)):append_text(" (" .. key_name .. ")")
+
+    subtree:add_le(gossip_socket_entry_index, tvb(1,1))
+
+    local port_off, port_off_range
+    port_off, port_off_range, tvb = decode_leb16(tvb(2))
+    local port = prev_port + port_off
+    subtree:add_le(gossip_socket_entry_port, port_off_range, port)
+
+    subtree:set_len(before_len - tvb:len())
+    return tvb, subtree, port
 end
 
 function solana_gossip_disect_compressed_slots (tvb, tree)
