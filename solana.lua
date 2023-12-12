@@ -2,8 +2,8 @@ if set_plugin_info then
     local my_info = {
         version = "0.1",
         author  = "Richard Patel",
-        email   = "me@terorie.dev",
-        license = "Apache-2.0",
+        email   = "ripatel@jumptrading.com",
+        license = "GPL-2.0-only",
         details = "Wireshark plugin for decoding Solana blockchain traffic",
     }
     set_plugin_info(my_info)
