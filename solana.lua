@@ -178,7 +178,7 @@ local gossip_epoch_slots_bitvec_size  = ProtoField.uint64("solana.gossip.epoch_s
 local gossip_epoch_slots_flate2       = ProtoField.bytes ("solana.gossip.epoch_slots.flate2",       "Flate2 Data")
 
 local sol_slot              = ProtoField.uint64("solana.slot",                "Slot")
-local sol_transaction       = ProtoField.none  ("solana.tx",                  "Transaction")
+local sol_transaction       = ProtoField.bytes ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
 local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
 local sol_tx_sigs_req       = ProtoField.uint8 ("solana.tx.sigs_req",         "Required Signatures",      base.DEC)
@@ -930,7 +930,7 @@ end
 -- Pops a transaction off tvb and appends a subtree to tree.
 function solana_disect_transaction (tvb, tree, name)
     local before_len = tvb:len()
-    local subtree = tree:add(sol_transaction, tvb)
+    local subtree = tree:add(solana_proto, tvb)
 
     local num_sigs = tvb(0,1):le_uint()
     tvb = tvb(1)
@@ -983,8 +983,15 @@ function solana_disect_invoc (tvb, tree)
     end
 
     local data_len = tvb(0,1):le_uint()
-    subtree:add(sol_invoc_data, tvb(1,data_len))
-    tvb = tvb(1+data_len)
+    if data_len > 0 then
+        subtree:add(sol_invoc_data, tvb(1,data_len))
+    end
+
+    if data_len+1<tvb:len() then
+        tvb = tvb(1+data_len)
+    else
+        tvb = tvb(0,0)
+    end
 
     subtree:set_len(before_len - tvb:len())
     return tvb, subtree
@@ -1032,8 +1039,7 @@ function solana_disect_data_shred (tvb, tree, merkle_height)
 end
 
 function solana_disect_merkle_proof(tvb, tree, merkle_height)
-    local proof_tree = tree:add(merkle_proof, tvb(0, 20*(merkle_height+1)))
-    proof_tree:add_le(merkle_proof_root, tvb(0, 20))
+    local proof_tree = tree:add(merkle_proof, tvb(0, 20*(merkle_height)))
     for i=1,merkle_height,1 do
         tvb = tvb(20)
         proof_tree:add(merkle_proof_node, tvb(0,20)):append_text(" #" .. i-1)
