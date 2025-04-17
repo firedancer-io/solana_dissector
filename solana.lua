@@ -9,6 +9,12 @@ if set_plugin_info then
     set_plugin_info(my_info)
 end
 
+do
+  if Dissector.get("solana.txn") ~= nil then
+    return
+  end
+end
+
 ---------------------------------------
 -- Protocols                         --
 ---------------------------------------
