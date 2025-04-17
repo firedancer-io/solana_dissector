@@ -28,6 +28,11 @@ This plugin doesn't implement mappings yet and instead hardcodes ports.
 
 This might get fixed in the future, but for now, you have to use "Decode As" to select a protocol if the hardcoded mapping fails.
 
+## mev-protos
+
+Provided [mev-protos](https://github.com/jito-labs/mev-protos) are added to the Wireshark search path,
+solana_dissector will decode Solana Transactions occurring in bundles received via gRPC.
+
 ## Development
 
 - 🚧 Gossip protocol
@@ -69,3 +74,4 @@ This might get fixed in the future, but for now, you have to use "Decode As" to 
   - ✅ AncestorHashes
 - ✅ TPU (UDP)
 - ❌ TPU (QUIC)
+- ✅ mev-protos

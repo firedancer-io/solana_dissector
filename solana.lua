@@ -18,6 +18,7 @@ local gossip       = Proto("Solana.Gossip",  "Solana Gossip Protocol")
 local shreds_proto = Proto("Solana.Shreds",  "Solana Shreds Protocol")
 local repair_proto = Proto("Solana.Repair",  "Solana Repair Protocol")
 local tpu_proto    = Proto("Solana.TPU.UDP", "Solana TPU Protocol (UDP)")
+local txn_proto    = Proto("Solana.Txn",     "Solana Transaction")
 
 ---------------------------------------
 -- Data Types                        --
@@ -178,13 +179,12 @@ local gossip_epoch_slots_bitvec_size  = ProtoField.uint64("solana.gossip.epoch_s
 local gossip_epoch_slots_flate2       = ProtoField.bytes ("solana.gossip.epoch_slots.flate2",       "Flate2 Data")
 
 local sol_slot              = ProtoField.uint64("solana.slot",                "Slot")
-local sol_transaction       = ProtoField.bytes ("solana.tx",                  "Transaction")
 local sol_signature         = ProtoField.bytes ("solana.sig",                 "Signature")
 local sol_pubkey            = ProtoField.bytes ("solana.pubkey",              "Pubkey")
-local sol_tx_sigs_req       = ProtoField.uint8 ("solana.tx.sigs_req",         "Required Signatures",      base.DEC)
-local sol_tx_signed_ro      = ProtoField.uint8 ("solana.tx.sigs.ro",          "Signed read-only count",   base.DEC)
-local sol_tx_unsigned_ro    = ProtoField.uint8 ("solana.tx.sigs.rw",          "Unsigned read-only count", base.DEC)
-local sol_recent_blockhash  = ProtoField.bytes ("solana.tx.recent_blockhash", "Recent blockhash")
+local sol_tx_sigs_req       = ProtoField.uint8 ("solana.txn.sigs_req",        "Required Signatures",      base.DEC)
+local sol_tx_signed_ro      = ProtoField.uint8 ("solana.txn.sigs.ro",         "Signed read-only count",   base.DEC)
+local sol_tx_unsigned_ro    = ProtoField.uint8 ("solana.txn.sigs.rw",         "Unsigned read-only count", base.DEC)
+local sol_recent_blockhash  = ProtoField.bytes ("solana.txn.recent_blockhash","Recent blockhash")
 local sol_shred_version     = ProtoField.uint16("solana.shred_version",       "Shred Version")
 local sol_invoc             = ProtoField.none  ("solana.insn",                "Instruction")
 local sol_invoc_program_idx = ProtoField.uint8 ("solana.insn.program_index",  "Program Index", base.DEC)
@@ -252,7 +252,6 @@ local repair_timestamp   = ProtoField.uint64("solana.repair.timestamp",   "Times
 
 solana_proto.fields = {
     sol_slot,
-    sol_transaction,
     sol_signature,
     sol_pubkey,
     sol_tx_sigs_req,
@@ -485,7 +484,12 @@ end
 
 function tpu_proto.dissector (tvb, pinfo, tree)
     local subtree = tree:add(tpu_proto, tvb())
-    solana_disect_transaction(tvb, tree)
+    solana_disect_transaction(tvb, subtree)
+end
+
+function txn_proto.dissector (tvb, pinfo, tree)
+    local subtree = tree:add(txn_proto, tvb())
+    solana_disect_transaction(tvb, subtree)
 end
 
 -- Assuming base port 8000
@@ -930,41 +934,40 @@ end
 -- Pops a transaction off tvb and appends a subtree to tree.
 function solana_disect_transaction (tvb, tree, name)
     local before_len = tvb:len()
-    local subtree = tree:add(solana_proto, tvb)
 
     local num_sigs = tvb(0,1):le_uint()
     tvb = tvb(1)
     for i=1,num_sigs,1 do
-        subtree:add(sol_signature, tvb(0,64)):append_text(" #" .. i-1)
+        tree:add(sol_signature, tvb(0,64)):append_text(" #" .. i-1)
         tvb = tvb(64)
     end
 
     -- TODO support txn v0
-    subtree:add_le(sol_tx_sigs_req,    tvb(0,1))
-    subtree:add_le(sol_tx_signed_ro,   tvb(1,1))
-    subtree:add_le(sol_tx_unsigned_ro, tvb(2,1))
+    tree:add_le(sol_tx_sigs_req,    tvb(0,1))
+    tree:add_le(sol_tx_signed_ro,   tvb(1,1))
+    tree:add_le(sol_tx_unsigned_ro, tvb(2,1))
     tvb = tvb(3)
 
     local num_keys = tvb(0,1):le_uint()
     tvb = tvb(1)
     for i=1,num_keys,1 do
-        subtree:add(sol_pubkey, tvb(0,32)):append_text(" #" .. i-1)
+        tree:add(sol_pubkey, tvb(0,32)):append_text(" #" .. i-1)
         tvb = tvb(32)
     end
 
-    subtree:add(sol_recent_blockhash, tvb(0,32))
+    tree:add(sol_recent_blockhash, tvb(0,32))
     tvb = tvb(32)
 
     local num_invocs = tvb(0,1):le_uint()
     tvb = tvb(1)
     for i=1,num_invocs,1 do
         local invoc
-        tvb, invoc = solana_disect_invoc (tvb, subtree)
+        tvb, invoc = solana_disect_invoc (tvb, tree)
         invoc:append_text(" #" .. i-1)
     end
 
-    subtree:set_len(before_len - tvb:len())
-    return tvb, subtree
+    tree:set_len(before_len - tvb:len())
+    return tvb, tree
 end
 
 -- Pops a transaction instruction off tvb and appends a subtree to tree.
@@ -1053,4 +1056,11 @@ function solana_repair_disect_header (tvb, tree)
     tree:add_le(repair_timestamp, tvb(128,8))
     tree:add_le(repair_nonce,     tvb(136,4))
     return tvb(140)
+end
+
+-- Dissect Solana transactions in mev-protos.
+-- Unfortunately, mev-protos does not use proper namespacing.
+do
+    local protobuf_field_table = DissectorTable.get("protobuf_field")
+    protobuf_field_table:add("packet.Packet.data", txn_proto)
 end
