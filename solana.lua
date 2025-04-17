@@ -120,6 +120,7 @@ local GOSSIP_SOCKET_TPU_QUIC          =  8
 local GOSSIP_SOCKET_TPU_VOTE          =  9
 local GOSSIP_SOCKET_TVU               = 10
 local GOSSIP_SOCKET_TVU_QUIC          = 11
+local GOSSIP_SOCKET_TPU_VOTE_QUIC     = 12
 
 local gossip_socket_names = {
     [GOSSIP_SOCKET_GOSSIP]            = "Gossip",
@@ -134,6 +135,7 @@ local gossip_socket_names = {
     [GOSSIP_SOCKET_TPU_VOTE]          = "TPU Vote",
     [GOSSIP_SOCKET_TVU]               = "TVU",
     [GOSSIP_SOCKET_TVU_QUIC]          = "TVU QUIC",
+    [GOSSIP_SOCKET_TPU_VOTE_QUIC]     = "TPU Vote QUIC",
 }
 
 local gossip_extensions = ProtoField.none("solana.gossip.extensions", "Extensions")
