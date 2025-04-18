@@ -1151,6 +1151,14 @@ function solana_repair_disect_header (tvb, tree)
     return tvb(140)
 end
 
+-- Dissect Solana transactions in QUIC connections.
+do
+    -- FIXME Only attempt to interpret client->server unidirectional
+    --       streams.  How to get QUIC-specific info from Lua?
+    local quic_field_table = DissectorTable.get("quic.proto")
+    quic_field_table:add("solana-tpu", txn_proto)
+end
+
 -- Dissect Solana transactions in mev-protos.
 -- Unfortunately, mev-protos does not use proper namespacing.
 do

@@ -31,3 +31,7 @@ tshark -r packets/TURBINE_PACKETS/merkle_code.pcap "${TURBINE_FLAGS[@]}" | awk '
 tshark -r packets/TURBINE_PACKETS/merkle_data_resigned.pcap "${TURBINE_FLAGS[@]}" | awk '/Solana Shred/,/^$/' | unexpand -t 4 > packets/TURBINE_PACKETS/merkle_data_resigned.pcap.txt
 
 tshark -r packets/TURBINE_PACKETS/merkle_data.pcap "${TURBINE_FLAGS[@]}" | awk '/Solana Shred/,/^$/' | unexpand -t 4 > packets/TURBINE_PACKETS/merkle_data.pcap.txt
+
+# Unfortunately broken.  Somehow, the solana-tpu QUIC ALPN registration
+# only works after reloading the Lua plugin, not on the first try.
+#tshark -r packets/TPU/tpu_quic.pcapng "${COMMON_FLAGS[@]}" | unexpand -t 4 > packets/TPU/tpu_quic.pcapng.txt
