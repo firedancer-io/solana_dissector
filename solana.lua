@@ -1058,8 +1058,16 @@ function solana_disect_coding_shred (tvb, tree, merkle_height, is_chained, is_re
         tvb = tvb(0, proof_off)
     end
 
+    local chain_tvb
     if is_chained then
-        subtree:add(shred_chain, tvb(tvb:len()-32))
+        chain_tvb = tvb(tvb:len()-32)
+        tvb = tvb(0,tvb:len()-32)
+    end
+
+    subtree:add(shred_parity_content, tvb)
+
+    if chain_tvb then
+        subtree:add(shred_chain, chain_tvb)
     end
 
     if proof_tvb then
