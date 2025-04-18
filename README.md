@@ -10,7 +10,7 @@ Download latest version of plugin
 rm -f /Applications/Wireshark.app/Contents/PlugIns/wireshark/solana.lua
 curl --output /Applications/Wireshark.app/Contents/PlugIns/wireshark/solana.lua \
   --proto '=https' --tlsv1.2 -sSf \
-  https://raw.githubusercontent.com/terorie/solana_dissector/main/solana.lua
+  https://raw.githubusercontent.com/firedancer-io/solana_dissector/main/solana.lua
 ```
 
 To activate, hit Cmd+Shift+L or restart Wireshark.
