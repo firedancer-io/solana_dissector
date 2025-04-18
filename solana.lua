@@ -978,6 +978,20 @@ function solana_disect_transaction (tvb, tree, name)
     return tvb, tree
 end
 
+function dissect_compact_u16 (tvb)
+    local num = 0
+    local shift = 0
+    local sub_tvb = tvb
+    local limb
+    repeat
+        limb = sub_tvb(0,1):uint()
+        sub_tvb = sub_tvb(1)
+        num = bit.bor(num, bit.lshift(bit.band(limb, 0x7f), shift))
+        shift = shift + 7
+    until bit.band(limb, 0x80)==0
+    return num, tvb(0,tvb:len()-sub_tvb:len())
+end
+
 -- Pops a transaction instruction off tvb and appends a subtree to tree.
 function solana_disect_invoc (tvb, tree)
     local before_len = tvb:len()
@@ -993,15 +1007,15 @@ function solana_disect_invoc (tvb, tree)
         tvb = tvb(1)
     end
 
-    local data_len = tvb(0,1):le_uint()
+    local data_len, data_len_tvb = dissect_compact_u16(tvb)
+    tvb = tvb(data_len_tvb:len())
     if data_len > 0 then
-        subtree:add(sol_invoc_data, tvb(1,data_len))
+        subtree:add(sol_invoc_data, tvb(0,data_len))
     end
-
-    if data_len+1<tvb:len() then
-        tvb = tvb(1+data_len)
-    else
+    if data_len == tvb:len() then
         tvb = tvb(0,0)
+    else
+        tvb = tvb(data_len)
     end
 
     subtree:set_len(before_len - tvb:len())
