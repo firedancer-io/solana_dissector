@@ -74,5 +74,6 @@ solana_dissector will decode Solana Transactions occurring in bundles received v
   - ✅ Orphan
   - ✅ AncestorHashes
 - ✅ TPU (UDP)
-- ❌ TPU (QUIC)
+- 🚧 TPU (QUIC)
+  - If solana-tpu QUIC traffic doesn't dissect, run "Reload Lua plugins"
 - ✅ mev-protos
