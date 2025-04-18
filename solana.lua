@@ -548,6 +548,14 @@ local function tvbs (tvb, ...)
     return unpack(ret)
 end
 
+local function tvb1 (tvb,off,sz)
+    if tvb:len() == off then
+        return tvb(0,0)
+    else
+        return tvb(off,sz)
+    end
+end
+
 ---------------------------------------
 -- Data types                        --
 ---------------------------------------
@@ -758,7 +766,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
         tree:add_le(gossip_version_major, tvb(40,2))
         tree:add_le(gossip_version_minor, tvb(42,2))
         tree:add_le(gossip_version_patch, tvb(44,2))
-        if tvb(46,1) == 1 then
+        if tvb(46,1):uint() == 1 then
             tree:add_le(gossip_version_commit, tvb(47,4))
             tvb = tvb(51)
         else
@@ -766,6 +774,7 @@ function solana_gossip_disect_crds_data (tvb, tree)
         end
         if data_id == GOSSIP_CRDS_VERSION then
             tree:add_le(gossip_version_features, tvb(0,4))
+            tvb = tvb1(tvb,4)
         end
     elseif data_id == GOSSIP_CRDS_NODE_INSTANCE then
         tree:add   (gossip_pubkey,    tvb(0,32))
