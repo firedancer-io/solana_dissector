@@ -205,6 +205,8 @@ local shred_data          = ProtoField.none  ("solana.shred.data",    "Data Shre
 local shred_index         = ProtoField.uint32("solana.shred.index",   "Shred Index")
 local shred_version       = ProtoField.uint16("solana.shred.version", "Shred Version")
 local shred_fec_set_index = ProtoField.uint32("solana.shred.fec_set", "FEC Set Index")
+local shred_resign        = ProtoField.bytes ("solana.shred.resign",  "Retransmitter Signature")
+local shred_chain         = ProtoField.bytes ("solana.shred.chain",   "Chain Hash")
 
 local shred_coding_num_data    = ProtoField.uint16("solana.shred.coding.num_data",   "Data Shred Count")
 local shred_coding_num_coding  = ProtoField.uint16("solana.shred.coding.num_coding", "Coding Shred Count")
@@ -220,7 +222,6 @@ local shred_data_size          = ProtoField.uint16("solana.shred.data.size",    
 local shred_data_content       = ProtoField.bytes ("solana.shred.data.contents",      "Content")
 
 local merkle_proof       = ProtoField.none ("solana.shred.merkle",           "Merkle Proof")
-local merkle_proof_root  = ProtoField.none ("solana.shred.merkle.root",      "Merkle Proof Root")
 local merkle_proof_node  = ProtoField.none ("solana.shred.merkle.node",      "Merkle Proof Node")
 
 local REPAIR_LEGACY_WINDOW_INDEX                    = 0
@@ -369,6 +370,8 @@ shreds_proto.fields = {
     shred_index,
     shred_version,
     shred_fec_set_index,
+    shred_resign,
+    shred_chain,
     ------- Coding Header
     shred_coding_num_data,
     shred_coding_num_coding,
@@ -384,7 +387,6 @@ shreds_proto.fields = {
     shred_data_content,
     ------- Merkle Tree
     merkle_proof,
-    merkle_proof_root,
     merkle_proof_node,
 }
 
@@ -436,18 +438,30 @@ function shreds_proto.dissector (tvb, pinfo, tree)
     tvb = tvb(83)
     if variant == 0xA5 then
         variant_node:append_text(" (Data)")
-        solana_disect_data_shred(tvb, subtree, 0)
+        solana_disect_data_shred(tvb, subtree, 0, false, false)
     elseif variant == 0x5A then
         variant_node:append_text(" (Coding)")
-        solana_disect_coding_shred(tvb, subtree, 0)
+        solana_disect_coding_shred(tvb, subtree, 0, false, false)
+    elseif (0x90 <= variant) and (variant <= 0x9F) then
+        variant_node:append_text(" (Data, Merkle, Chained)")
+        solana_disect_data_shred(tvb, subtree, variant-0x60, true, false)
+    elseif (0x60 <= variant) and (variant <= 0x6F) then
+        variant_node:append_text(" (Code, Merkle, Chained)")
+        solana_disect_coding_shred(tvb, subtree, variant-0x60, true, false)
+    elseif (0xB0 <= variant) and (variant <= 0xBF) then
+        variant_node:append_text(" (Data, Merkle, Chained, Resigned)")
+        solana_disect_data_shred(tvb, subtree, variant-0xB0, true, true)
+    elseif (0x70 <= variant) and (variant <= 0x7F) then
+        variant_node:append_text(" (Code, Merkle, Chained, Resigned)")
+        solana_disect_coding_shred(tvb, subtree, variant-0x70, true, true)
     elseif (0x40 <= variant) and (variant <= 0x4F) then
         variant_node:append_text(" (Coding, Merkle)")
-        solana_disect_coding_shred(tvb, subtree, variant-0x40)
+        solana_disect_coding_shred(tvb, subtree, variant-0x40, false, false)
     elseif (0x80 <= variant) and (variant <= 0x8F) then
         variant_node:append_text(" (Data, Merkle)")
-        solana_disect_data_shred(tvb, subtree, variant-0x80)
+        solana_disect_data_shred(tvb, subtree, variant-0x80, false, false)
     else
-        error("unsupported shred variant")
+        error(string.format("unsupported shred variant: 0x%02x", variant))
     end
 end
 
@@ -1022,24 +1036,42 @@ function solana_disect_invoc (tvb, tree)
     return tvb, subtree
 end
 
-function solana_disect_coding_shred (tvb, tree, merkle_height)
+function solana_disect_coding_shred (tvb, tree, merkle_height, is_chained, is_resigned)
     local subtree = tree:add(shred_coding, tvb)
     subtree:add_le(shred_coding_num_data,   tvb(0,2))
     subtree:add_le(shred_coding_num_coding, tvb(2,2))
     subtree:add_le(shred_coding_position,   tvb(4,2))
     tvb = tvb(6)
-    local content_size = 1228 - 83 - 6
-    if merkle_height == 0 then
-        subtree:add_le(shred_parity_content,       tvb(0,content_size))
-    else
-        content_size = content_size - 20*(merkle_height+1)
-        subtree:add_le(shred_parity_content,       tvb(0,content_size))
-        tvb = tvb(content_size)
-        solana_disect_merkle_proof(tvb, subtree, merkle_height)
+
+    local proof_len = 20*merkle_height
+
+    local resign_tvb
+    if is_resigned then
+        resign_tvb = tvb(tvb:len()-64)
+        tvb = tvb(0, tvb:len()-64)
+    end
+
+    local proof_tvb
+    if proof_len > 0 then
+        local proof_off = tvb:len()-proof_len
+        proof_tvb = tvb(proof_off)
+        tvb = tvb(0, proof_off)
+    end
+
+    if is_chained then
+        subtree:add(shred_chain, tvb(tvb:len()-32))
+    end
+
+    if proof_tvb then
+        solana_disect_merkle_proof(proof_tvb, subtree, merkle_height)
+    end
+
+    if resign_tvb then
+        subtree:add(shred_resign, resign_tvb)
     end
 end
 
-function solana_disect_data_shred (tvb, tree, merkle_height)
+function solana_disect_data_shred (tvb, tree, merkle_height, is_chained, is_resigned)
     local subtree = tree:add(shred_data, tvb)
     subtree:add_le(shred_data_parent_offset, tvb(0,2))
     local flags_node = subtree:add(shred_data_flags, tvb(2,1))
@@ -1058,16 +1090,38 @@ function solana_disect_data_shred (tvb, tree, merkle_height)
         :add(shred_data_last, tvb(2,1), bit.band(flags, 0x80) ~= 0)
         :set_generated()
 
-    if merkle_height > 0 then
-        solana_disect_merkle_proof(tvb(1100-20*merkle_height), subtree, merkle_height)
+    local proof_len = 20*merkle_height
+
+    local resign_tvb
+    if is_resigned then
+        resign_tvb = tvb(tvb:len()-64)
+        tvb = tvb(0, tvb:len()-64)
+    end
+
+    local proof_tvb
+    if proof_len > 0 then
+        local proof_off = tvb:len()-proof_len
+        proof_tvb = tvb(proof_off)
+        tvb = tvb(0, proof_off)
+    end
+
+    if is_chained then
+        subtree:add(shred_chain, tvb(tvb:len()-32))
+    end
+
+    if proof_tvb then
+        solana_disect_merkle_proof(proof_tvb, subtree, merkle_height)
+    end
+
+    if resign_tvb then
+        subtree:add(shred_resign, resign_tvb)
     end
 end
 
 function solana_disect_merkle_proof(tvb, tree, merkle_height)
     local proof_tree = tree:add(merkle_proof, tvb(0, 20*(merkle_height)))
-    for i=1,merkle_height,1 do
-        tvb = tvb(20)
-        proof_tree:add(merkle_proof_node, tvb(0,20)):append_text(" #" .. i-1)
+    for i=0,merkle_height-1,1 do
+        proof_tree:add(merkle_proof_node, tvb(i*20,20)):append_text(" #" .. i)
     end
 end
 

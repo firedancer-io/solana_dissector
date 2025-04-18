@@ -60,11 +60,12 @@ solana_dissector will decode Solana Transactions occurring in bundles received v
     - ✅ Node Instance
     - ❌ Duplicate Shred
     - ✅ Incremental Snapshot Hashes
-- 🚧 TVU
-  - 🚧 Legacy Coding Shreds
-  - ✅ Legacy Data Shreds
-  - ❌ Merkle Coding Shreds
-  - ❌ Merkle Data Shreds
+- ✅ Shreds
+  - ✅ Legacy Shreds
+  - ✅ Merkle Shreds
+  - ✅ Chained Merkle Shreds
+  - ✅ Chained Resigned Merkle Shreds
+  - ❌ FEC Recovery
 - ✅ Repair
   - ✅ Legacy types
   - ✅ Pong
